@@ -1,0 +1,45 @@
+#pragma kernel BuildGrass
+
+struct TileData
+{
+    float3 center;
+};
+
+struct GrassData
+{
+    float3 position;
+    // (We will add width, height, facing, etc., in Section 3)
+};
+
+StructuredBuffer<TileData> _VisibleTiles;
+AppendStructuredBuffer<GrassData> _GrassDataBuffer;
+
+float _TileSize;
+uint _GrassPerAxis;
+
+// 8x8 threads per group (64 blades evaluated per group)
+[numthreads(8, 8, 1)]
+void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
+{
+    // groupID.z corresponds to the tile index
+    uint tileIndex = groupID.z;
+    TileData tile = _VisibleTiles[tileIndex];
+
+    // Ensure we don't process out-of-bounds threads if _GrassPerAxis isn't a multiple of 8
+    if (id.x >= _GrassPerAxis || id.y >= _GrassPerAxis)
+        return;
+
+    // Calculate local position inside the tile
+    float step = _TileSize / (float)_GrassPerAxis;
+    float halfSize = _TileSize * 0.5f;
+
+    float3 localPos = float3(id.x * step - halfSize, 0, id.y * step - halfSize);
+    float3 worldPos = tile.center + localPos;
+
+    // Output surviving grass to the Append Buffer
+    // (In Section 3, fine culling logic goes here before appending)
+    GrassData grass;
+    grass.position = worldPos;
+
+    _GrassDataBuffer.Append(grass);
+}

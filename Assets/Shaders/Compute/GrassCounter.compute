@@ -1,0 +1,21 @@
+#pragma kernel PrepareArgs
+
+RWStructuredBuffer<uint> _ArgsBuffer;
+
+// Raw buffers are read as ByteAddressBuffer in HLSL
+ByteAddressBuffer _CountBuffer; 
+
+[numthreads(1, 1, 1)]
+void PrepareArgs (uint3 id : SV_DispatchThreadID)
+{
+    // Load the uint value from byte address 0
+    uint count = _CountBuffer.Load(0);
+    
+    // The arguments for Graphics.DrawProceduralIndirect:
+    // 0: Vertex count per instance
+    // 1: Instance count (What we update)
+    // 2: Start vertex location
+    // 3: Start instance location
+    // 4: 0
+    _ArgsBuffer[1] = count;
+}
