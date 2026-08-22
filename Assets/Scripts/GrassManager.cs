@@ -8,30 +8,53 @@ public class GrassManager : MonoBehaviour
     public float tileSize = 10f;
     public int grassPerAxisPerTile = 16; // E.g., 16x16 = 256 blades per tile
 
+    [Header("Blade Shape - base values, randomized per-blade in Step 3")]
+    public float bladeHeight = 1f;
+    public float bladeWidth = 0.06f;
+    public float bladeBend = 0.25f;
+    public float bladeTilt = 0.08f;
+
+    [Header("Per-Blade Randomization (Step 3)")]
+    [Range(0f, 1f)] public float shapeVariance = 0.3f; // +/- fraction of base height/width/bend/tilt
+    public float sideCurveStrength = 0.05f;            // max random sideways curve magnitude
+    [Range(0f, 1f)] public float jitterStrength = 1f;  // fraction of grid step used as position jitter
+
     [Header("References")]
     public Camera mainCamera;
     public ComputeShader grassBuilderCS;
-    public ComputeShader grassCounterCS;
     public Material grassMaterial;
 
-    public struct TileData { public Vector3 center; }
-    public struct GrassData { public Vector3 position; }
+    public struct TileData { public Vector3 center; public uint tileId; }
+
+    // Bytes: center(12) + tileId(4) = 16.
+    private const int tileDataStride = 16;
+    public struct GrassData
+    {
+        public Vector3 position;
+        public Vector2 facing;
+        public float height;
+        public float width;
+        public float tilt;
+        public float bend;
+        public float sideCurve;
+    }
+
+    // Bytes: position(12) + facing(8) + height/width/tilt/bend/sideCurve(5*4=20) = 40.
+    private const int grassDataStride = 40;
 
     private Bounds[] tileBounds;
     private TileData[] allTiles;
     private List<TileData> visibleTilesList;
-    private Plane[] cameraFrustumPlanes;
+    private readonly Plane[] cameraFrustumPlanes = new Plane[6];
 
     // Buffers
     private GraphicsBuffer visibleTilesBuffer;
     private GraphicsBuffer grassDataBuffer;
     private GraphicsBuffer argsBuffer;
-    private GraphicsBuffer countBuffer;
 
     private int numTilesPerAxis;
     private int totalTiles;
     private int buildKernel;
-    private int countKernel;
 
     // Must match BLADE_VERTEX_COUNT in Assets/Shaders/GrassBladeSpine.hlsl
     // (15-vertex strip expanded into a non-indexed triangle list: 13 tris * 3 = 39).
@@ -42,7 +65,6 @@ public class GrassManager : MonoBehaviour
         if (mainCamera == null) mainCamera = Camera.main;
 
         buildKernel = grassBuilderCS.FindKernel("BuildGrass");
-        countKernel = grassCounterCS.FindKernel("PrepareArgs");
 
         InitializeGrid();
         InitializeBuffers();
@@ -67,7 +89,7 @@ public class GrassManager : MonoBehaviour
             {
                 Vector3 center = startPos + new Vector3(x * tileSize, 0, z * tileSize);
                 tileBounds[index] = new Bounds(center, new Vector3(tileSize, 5f, tileSize));
-                allTiles[index] = new TileData { center = center };
+                allTiles[index] = new TileData { center = center, tileId = (uint)index };
                 index++;
             }
         }
@@ -75,16 +97,13 @@ public class GrassManager : MonoBehaviour
 
     private void InitializeBuffers()
     {
-        visibleTilesBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, totalTiles, 12);
+        visibleTilesBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, totalTiles, tileDataStride);
         
         // Max possible grass blades
         int maxGrassCount = totalTiles * grassPerAxisPerTile * grassPerAxisPerTile;
         
-        // Append buffer for grass instances (stride = 12 bytes for Vector3 position)
-        grassDataBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Append, maxGrassCount, 12);
-        
-        // Buffer to hold the extracted count from the append buffer
-        countBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Raw, 1, 4);
+        // Append buffer for grass instances
+        grassDataBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Append, maxGrassCount, grassDataStride);
         
         // Indirect Draw Arguments buffer (5 uints)
         argsBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, 1, 5 * sizeof(uint));
@@ -102,7 +121,7 @@ public class GrassManager : MonoBehaviour
     private void OnDrawGizmos()
     {
         // Draw the grid in the editor for visualization
-        if (tileBounds == null || cameraFrustumPlanes == null) return;
+        if (tileBounds == null) return;
 
         for (int i = 0; i < totalTiles; i++)
         {
@@ -127,7 +146,7 @@ public class GrassManager : MonoBehaviour
     private void PerformCPUCulling()
     {
         visibleTilesList.Clear();
-        cameraFrustumPlanes = GeometryUtility.CalculateFrustumPlanes(mainCamera);
+        GeometryUtility.CalculateFrustumPlanes(mainCamera, cameraFrustumPlanes);
 
         for (int i = 0; i < totalTiles; i++)
         {
@@ -153,6 +172,14 @@ public class GrassManager : MonoBehaviour
         grassBuilderCS.SetFloat("_TileSize", tileSize);
         grassBuilderCS.SetInt("_GrassPerAxis", grassPerAxisPerTile);
 
+        grassBuilderCS.SetFloat("_BaseHeight", bladeHeight);
+        grassBuilderCS.SetFloat("_BaseWidth", bladeWidth);
+        grassBuilderCS.SetFloat("_BaseBend", bladeBend);
+        grassBuilderCS.SetFloat("_BaseTilt", bladeTilt);
+        grassBuilderCS.SetFloat("_ShapeVariance", shapeVariance);
+        grassBuilderCS.SetFloat("_SideCurveStrength", sideCurveStrength);
+        grassBuilderCS.SetFloat("_JitterStrength", jitterStrength);
+
         // Dispatch threads based on visible tiles
         int threadGroups = Mathf.CeilToInt(grassPerAxisPerTile / 8f);
 
@@ -162,13 +189,10 @@ public class GrassManager : MonoBehaviour
 
     private void PrepareIndirectArgs()
     {
-        // 1. Copy the internal counter of the Append buffer to our standard buffer
-        GraphicsBuffer.CopyCount(grassDataBuffer, countBuffer, 0);
-
-        // 2. Dispatch CS2 to read the count and insert it into the argsBuffer
-        grassCounterCS.SetBuffer(countKernel, "_CountBuffer", countBuffer);
-        grassCounterCS.SetBuffer(countKernel, "_ArgsBuffer", argsBuffer);
-        grassCounterCS.Dispatch(countKernel, 1, 1, 1);
+        // Copy the append buffer's internal counter directly into argsBuffer's
+        // instance-count slot (byte offset 4 = uint index 1), skipping the
+        // intermediate countBuffer and the CS2 dispatch entirely.
+        GraphicsBuffer.CopyCount(grassDataBuffer, argsBuffer, 4);
     }
 
     private void RenderGrass()
@@ -186,6 +210,5 @@ public class GrassManager : MonoBehaviour
         visibleTilesBuffer?.Release();
         grassDataBuffer?.Release();
         argsBuffer?.Release();
-        countBuffer?.Release();
     }
 }

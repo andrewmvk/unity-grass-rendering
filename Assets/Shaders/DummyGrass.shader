@@ -3,13 +3,13 @@ Shader "Custom/DummyGrass"
     SubShader
     {
         Tags { "RenderPipeline"="HDRenderPipeline" "RenderType"="Opaque" "Queue"="Geometry" }
-        
+
         // DEPTH PREPASS - Forces grass depth to render before the terrain, fixing visibility from above
         Pass
         {
             Name "DepthForwardOnly"
             Tags { "LightMode" = "DepthForwardOnly" }
-            
+
             Cull Off
             ZWrite On
             ZTest LEqual
@@ -21,26 +21,16 @@ Shader "Custom/DummyGrass"
 
             #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
             #include "Packages/com.unity.render-pipelines.high-definition/Runtime/ShaderLibrary/ShaderVariables.hlsl"
-
-            struct GrassData
-            {
-                float3 position;
-            };
-            StructuredBuffer<GrassData> _GrassDataBuffer;
-
-            #include "GrassBladeSpine.hlsl"
+            #include "GrassVertex.hlsl"
 
             struct v2f { float4 pos : SV_POSITION; };
 
             v2f vert (uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
             {
                 v2f o;
-                GrassData grass = _GrassDataBuffer[instanceID];
-
-                float3 localPos = GetBladeSpineVertexPosition(vertexID);
+                float3 absoluteWorldPos = GetGrassVertexWorldPosition(vertexID, instanceID);
 
                 // HDRP Fix: Convert Absolute World Space to Camera-Relative
-                float3 absoluteWorldPos = grass.position + localPos;
                 float3 cameraRelativePos = GetCameraRelativePositionWS(absoluteWorldPos);
 
                 o.pos = TransformWorldToHClip(cameraRelativePos);
@@ -59,7 +49,7 @@ Shader "Custom/DummyGrass"
         {
             Name "ForwardOnly"
             Tags { "LightMode" = "ForwardOnly" }
-            
+
             Cull Off
             ZWrite On
             ZTest LEqual
@@ -71,25 +61,14 @@ Shader "Custom/DummyGrass"
 
             #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
             #include "Packages/com.unity.render-pipelines.high-definition/Runtime/ShaderLibrary/ShaderVariables.hlsl"
-
-            struct GrassData
-            {
-                float3 position;
-            };
-            StructuredBuffer<GrassData> _GrassDataBuffer;
-
-            #include "GrassBladeSpine.hlsl"
+            #include "GrassVertex.hlsl"
 
             struct v2f { float4 pos : SV_POSITION; };
 
             v2f vert (uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
             {
                 v2f o;
-                GrassData grass = _GrassDataBuffer[instanceID];
-
-                float3 localPos = GetBladeSpineVertexPosition(vertexID);
-
-                float3 absoluteWorldPos = grass.position + localPos;
+                float3 absoluteWorldPos = GetGrassVertexWorldPosition(vertexID, instanceID);
                 float3 cameraRelativePos = GetCameraRelativePositionWS(absoluteWorldPos);
 
                 o.pos = TransformWorldToHClip(cameraRelativePos);

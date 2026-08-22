@@ -1,14 +1,22 @@
 #pragma kernel BuildGrass
 
+#include "GrassHash.hlsl"
+
 struct TileData
 {
     float3 center;
+    uint tileId; // stable index into the full grid, independent of visibility/order
 };
 
 struct GrassData
 {
     float3 position;
-    // (We will add width, height, facing, etc., in Section 3)
+    float2 facing;
+    float height;
+    float width;
+    float tilt;
+    float bend;
+    float sideCurve;
 };
 
 StructuredBuffer<TileData> _VisibleTiles;
@@ -17,13 +25,24 @@ AppendStructuredBuffer<GrassData> _GrassDataBuffer;
 float _TileSize;
 uint _GrassPerAxis;
 
+// Baseline blade shape — each blade below is randomized around these values.
+float _BaseHeight;
+float _BaseWidth;
+float _BaseBend;
+float _BaseTilt;
+
+// How much each per-blade property is allowed to deviate from its base value.
+float _ShapeVariance;    // fraction of base height/width/bend/tilt, e.g. 0.3 = +/-30%
+float _SideCurveStrength; // max magnitude of the random sideways curve
+float _JitterStrength;    // fraction of the grid step used as position jitter, 0-1
+
 // 8x8 threads per group (64 blades evaluated per group)
 [numthreads(8, 8, 1)]
 void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
 {
-    // groupID.z corresponds to the tile index
-    uint tileIndex = groupID.z;
-    TileData tile = _VisibleTiles[tileIndex];
+    // groupID.z indexes into the current visible-tiles list, which is rebuilt (and
+    // reordered) every frame as the camera moves — it must never be used as a seed.
+    TileData tile = _VisibleTiles[groupID.z];
 
     // Ensure we don't process out-of-bounds threads if _GrassPerAxis isn't a multiple of 8
     if (id.x >= _GrassPerAxis || id.y >= _GrassPerAxis)
@@ -33,13 +52,38 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
     float step = _TileSize / (float)_GrassPerAxis;
     float halfSize = _TileSize * 0.5f;
 
-    float3 localPos = float3(id.x * step - halfSize, 0, id.y * step - halfSize);
+    // Seed from the tile's stable grid id (not its transient visible-list index) plus
+    // grid cell, so it stays identical for a given blade across frames/dispatches.
+    uint seed = tile.tileId * 92821u + id.x * 15761u + id.y * 60013u;
+
+    // Jitter the grid position within its cell so blades don't sit on a perfect grid.
+    float jitterX = HashToSigned(seed, 0) * step * 0.5 * _JitterStrength;
+    float jitterZ = HashToSigned(seed, 1) * step * 0.5 * _JitterStrength;
+
+    float3 localPos = float3(id.x * step - halfSize + jitterX, 0, id.y * step - halfSize + jitterZ);
     float3 worldPos = tile.center + localPos;
 
+    // Random facing direction (normalized 2D vector in the world XZ plane)
+    float facingAngle = HashToFloat01(seed, 2) * 6.28318530718; // 2*PI
+    float2 facing = float2(cos(facingAngle), sin(facingAngle));
+
+    // Per-blade shape variation around the base params
+    float height = max(0.01, _BaseHeight * (1.0 + HashToSigned(seed, 3) * _ShapeVariance));
+    float width = max(0.001, _BaseWidth * (1.0 + HashToSigned(seed, 4) * _ShapeVariance));
+    float tilt = _BaseTilt * (1.0 + HashToSigned(seed, 5) * _ShapeVariance);
+    float bend = _BaseBend * (1.0 + HashToSigned(seed, 6) * _ShapeVariance);
+    float sideCurve = HashToSigned(seed, 7) * _SideCurveStrength;
+
     // Output surviving grass to the Append Buffer
-    // (In Section 3, fine culling logic goes here before appending)
+    // (In Section 5, fine culling logic goes here before appending)
     GrassData grass;
     grass.position = worldPos;
+    grass.facing = facing;
+    grass.height = height;
+    grass.width = width;
+    grass.tilt = tilt;
+    grass.bend = bend;
+    grass.sideCurve = sideCurve;
 
     _GrassDataBuffer.Append(grass);
 }

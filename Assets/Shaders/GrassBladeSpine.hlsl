@@ -9,42 +9,64 @@
 #define BLADE_TRIANGLE_COUNT (BLADE_STRIP_VERTEX_COUNT - 2)
 #define BLADE_VERTEX_COUNT (BLADE_TRIANGLE_COUNT * 3)
 
-static const float _BladeBaseWidth = 0.06;
-static const float _BladeHeight = 0.5;
-static const float _BladeBend = 0.25;
-static const float _BladeTilt = 0.08;
-
-// Cubic Bezier spine control points, built from base/bend/tilt.
-// The curve lives in the local YZ plane (Y = up along the blade, Z = lean/bend direction).
-float3 GetBladeControlPoint(int i)
+// Per-blade shape params, read from GrassData (Step 3) plus per-vertex facing.
+// There is no "base" param: the root is always the local origin.
+struct BladeParams
 {
-    if (i == 0) return float3(0, 0, 0);
-    if (i == 1) return float3(0, _BladeHeight * 0.33, _BladeTilt * 0.5);
-    if (i == 2) return float3(0, _BladeHeight * 0.66, _BladeTilt * 0.8 + _BladeBend * 0.5);
-    return float3(0, _BladeHeight, _BladeTilt + _BladeBend);
-}
+    float height;
+    float width;
+    float bend;
+    float tilt;
+    float sideCurve;
+};
 
-float3 EvaluateCubicBezier(float t)
+// Cubic Bezier spine, following Sucker Punch's construction:
+//  - the tip sits at a height/tilt-derived offset from the root (facing is applied
+//    afterwards, by rotating the whole local frame - see ApplyBladeFacing);
+//  - the midpoint lies on the root-to-tip line, pushed off it by "bend" along the
+//    perpendicular to that line (so bend=0 collapses the curve onto a straight line);
+//  - the two interior cubic control points sit 2/3 of the way from each endpoint
+//    to that midpoint (the standard degree-elevation of a quadratic with a single
+//    control point at the midpoint), so tilt and bend stay orthogonal controls.
+// sideCurve is this project's own addition (not in Sucker Punch's system): an
+// independent lateral (local X) ramp, applied after the tilt/bend curve below.
+// The curve otherwise lives in local YZ (Y = up along the blade, Z = lean direction).
+float3 EvaluateCubicBezier(BladeParams p, float t)
 {
-    float3 p0 = GetBladeControlPoint(0);
-    float3 p1 = GetBladeControlPoint(1);
-    float3 p2 = GetBladeControlPoint(2);
-    float3 p3 = GetBladeControlPoint(3);
+    float3 root = float3(0, 0, 0);
+    float3 tip = float3(0, p.height, p.tilt);
+
+    float3 toTip = tip - root;
+    float toTipLen = length(toTip);
+    float3 dir = toTipLen > 1e-6 ? toTip / toTipLen : float3(0, 1, 0);
+
+    // Perpendicular to dir within the same YZ plane (dir.x is always 0 here),
+    // equivalent to cross(float3(1,0,0), dir) and already unit length.
+    float3 perp = float3(0, -dir.z, dir.y);
+
+    float3 mid = lerp(root, tip, 0.5) + perp * p.bend;
+
+    float3 p1 = root + (mid - root) * (2.0 / 3.0);
+    float3 p2 = tip + (mid - tip) * (2.0 / 3.0);
 
     float u = 1.0 - t;
-    return u * u * u * p0
-         + 3.0 * u * u * t * p1
-         + 3.0 * u * t * t * p2
-         + t * t * t * p3;
+    float3 curvePos = u * u * u * root
+                     + 3.0 * u * u * t * p1
+                     + 3.0 * u * t * t * p2
+                     + t * t * t * tip;
+
+    // root/tip/mid/p1/p2 all have x = 0, so curvePos.x is always 0 here.
+    curvePos.x = p.sideCurve * t;
+    return curvePos;
 }
 
-float GetBladeWidthAt(float t)
+float GetBladeWidthAt(BladeParams p, float t)
 {
-    return _BladeBaseWidth * (1.0 - t);
+    return p.width * (1.0 - t);
 }
 
 // The 15-vertex strip's actual position logic. stripIndex is in [0, BLADE_STRIP_VERTEX_COUNT).
-float3 GetStripVertexPosition(uint stripIndex)
+float3 GetStripVertexPosition(BladeParams p, uint stripIndex)
 {
     uint row = stripIndex / 2;
     uint side = stripIndex % 2;
@@ -53,8 +75,8 @@ float3 GetStripVertexPosition(uint stripIndex)
     bool isTip = stripIndex == (BLADE_STRIP_VERTEX_COUNT - 1);
     float t = isTip ? 1.0 : row / (float)BLADE_ROW_COUNT;
 
-    float3 center = EvaluateCubicBezier(t);
-    float width = isTip ? 0.0 : GetBladeWidthAt(t);
+    float3 center = EvaluateCubicBezier(p, t);
+    float width = isTip ? 0.0 : GetBladeWidthAt(p, t);
 
     float sideSign = (side == 0) ? -1.0 : 1.0;
     return center + float3(sideSign * width, 0, 0);
@@ -62,12 +84,21 @@ float3 GetStripVertexPosition(uint stripIndex)
 
 // Expands the 15-vertex strip into a non-indexed triangle list.
 // vertexID must be in [0, BLADE_VERTEX_COUNT) i.e. [0, BLADE_TRIANGLE_COUNT * 3).
-float3 GetBladeSpineVertexPosition(uint vertexID)
+float3 GetBladeLocalPosition(BladeParams p, uint vertexID)
 {
     uint triangleIndex = vertexID / 3;
     uint corner = vertexID % 3;
     uint stripIndex = triangleIndex + corner;
-    return GetStripVertexPosition(stripIndex);
+    return GetStripVertexPosition(p, stripIndex);
+}
+
+// Rotates a blade-local position around the vertical (Y) axis so the blade
+// points along "facing" (a normalized 2D direction in the world XZ plane).
+float3 ApplyBladeFacing(float3 localPos, float2 facing)
+{
+    float rotatedX = localPos.x * facing.x - localPos.z * facing.y;
+    float rotatedZ = localPos.x * facing.y + localPos.z * facing.x;
+    return float3(rotatedX, localPos.y, rotatedZ);
 }
 
 #endif
