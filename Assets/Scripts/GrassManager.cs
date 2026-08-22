@@ -33,6 +33,10 @@ public class GrassManager : MonoBehaviour
     private int buildKernel;
     private int countKernel;
 
+    // Must match BLADE_VERTEX_COUNT in Assets/Shaders/GrassBladeSpine.hlsl
+    // (15-vertex strip expanded into a non-indexed triangle list: 13 tris * 3 = 39).
+    private const uint bladeVertexCount = 39;
+
     void Start()
     {
         if (mainCamera == null) mainCamera = Camera.main;
@@ -84,9 +88,9 @@ public class GrassManager : MonoBehaviour
         
         // Indirect Draw Arguments buffer (5 uints)
         argsBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, 1, 5 * sizeof(uint));
-        uint[] args = new uint[] { 3, 0, 0, 0, 0 };
-        /* 
-        * 1 - Vertex count per instance: 3
+        uint[] args = new uint[] { bladeVertexCount, 0, 0, 0, 0 };
+        /*
+        * 1 - Vertex count per instance: bladeVertexCount (must match BLADE_VERTEX_COUNT in GrassBladeSpine.hlsl)
         * 2 - Instance count: initaliy 0
         * 3 - Start vertex: 0
         * 4 - Start instance: 0

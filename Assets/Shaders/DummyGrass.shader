@@ -28,23 +28,21 @@ Shader "Custom/DummyGrass"
             };
             StructuredBuffer<GrassData> _GrassDataBuffer;
 
+            #include "GrassBladeSpine.hlsl"
+
             struct v2f { float4 pos : SV_POSITION; };
 
             v2f vert (uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
             {
                 v2f o;
                 GrassData grass = _GrassDataBuffer[instanceID];
-                
-                // Simple triangle logic from Section 2
-                float3 localPos = float3(0, 0, 0);
-                if (vertexID == 0) localPos = float3(-0.1, 0, 0);
-                if (vertexID == 1) localPos = float3(0.1, 0, 0);
-                if (vertexID == 2) localPos = float3(0, 0.5, 0);
+
+                float3 localPos = GetBladeSpineVertexPosition(vertexID);
 
                 // HDRP Fix: Convert Absolute World Space to Camera-Relative
                 float3 absoluteWorldPos = grass.position + localPos;
                 float3 cameraRelativePos = GetCameraRelativePositionWS(absoluteWorldPos);
-                
+
                 o.pos = TransformWorldToHClip(cameraRelativePos);
                 return o;
             }
@@ -80,21 +78,20 @@ Shader "Custom/DummyGrass"
             };
             StructuredBuffer<GrassData> _GrassDataBuffer;
 
+            #include "GrassBladeSpine.hlsl"
+
             struct v2f { float4 pos : SV_POSITION; };
 
             v2f vert (uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
             {
                 v2f o;
                 GrassData grass = _GrassDataBuffer[instanceID];
-                
-                float3 localPos = float3(0, 0, 0);
-                if (vertexID == 0) localPos = float3(-0.1, 0, 0);
-                if (vertexID == 1) localPos = float3(0.1, 0, 0);
-                if (vertexID == 2) localPos = float3(0, 0.5, 0);
+
+                float3 localPos = GetBladeSpineVertexPosition(vertexID);
 
                 float3 absoluteWorldPos = grass.position + localPos;
                 float3 cameraRelativePos = GetCameraRelativePositionWS(absoluteWorldPos);
-                
+
                 o.pos = TransformWorldToHClip(cameraRelativePos);
                 return o;
             }
