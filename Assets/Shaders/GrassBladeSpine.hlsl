@@ -62,7 +62,7 @@ float3 GetStripVertexPosition(uint stripIndex)
 
 // Expands the 15-vertex strip into a non-indexed triangle list.
 // vertexID must be in [0, BLADE_VERTEX_COUNT) i.e. [0, BLADE_TRIANGLE_COUNT * 3).
-float3   (uint vertexID)
+float3 GetBladeSpineVertexPosition(uint vertexID)
 {
     uint triangleIndex = vertexID / 3;
     uint corner = vertexID % 3;
