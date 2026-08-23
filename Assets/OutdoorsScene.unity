@@ -439,9 +439,15 @@ MonoBehaviour:
   worldSize: 200
   tileSize: 10
   grassPerAxisPerTile: 16
+  bladeHeight: 1
+  bladeWidth: 0.06
+  bladeBend: 0.25
+  bladeTilt: 1
+  shapeVariance: 0.3
+  sideCurveStrength: 0.05
+  jitterStrength: 1
   mainCamera: {fileID: 1823688466}
   grassBuilderCS: {fileID: 7200000, guid: 1b8bb2e9391f40945a3cc24c1fded579, type: 3}
-  grassCounterCS: {fileID: 7200000, guid: 84ef4944aa5fe4e4eb1ff84a3de3bf34, type: 3}
   grassMaterial: {fileID: 2100000, guid: 5868cbd8923a50743a55cf8ef66fc17d, type: 2}
 --- !u!4 &1812282281
 Transform:

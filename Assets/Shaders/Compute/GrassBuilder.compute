@@ -1,23 +1,7 @@
 #pragma kernel BuildGrass
 
 #include "GrassHash.hlsl"
-
-struct TileData
-{
-    float3 center;
-    uint tileId; // stable index into the full grid, independent of visibility/order
-};
-
-struct GrassData
-{
-    float3 position;
-    float2 facing;
-    float height;
-    float width;
-    float tilt;
-    float bend;
-    float sideCurve;
-};
+#include "Assets/Shaders/GrassStructs.hlsl"
 
 StructuredBuffer<TileData> _VisibleTiles;
 AppendStructuredBuffer<GrassData> _GrassDataBuffer;
@@ -51,26 +35,36 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
     float step = _TileSize / (float)_GrassPerAxis;
     float halfSize = _TileSize * 0.5f;
 
-    // Seed from the tile's stable grid id plus grid cell, so it stays identical for a given blade across frames/dispatches.
-    uint seed = tile.tileId * 92821u + id.x * 15761u + id.y * 60013u;
+    // Combine the tile's stable grid id with the grid cell into one per-blade hash.
+    // Every random draw below is seeded from this single value, so it stays
+    // identical for a given blade across frames/dispatches.
+    uint rawIndex = tile.tileId * 92821u + id.x * 15761u + id.y * 60013u;
+    uint bladeHash = HashUInt(rawIndex);
 
     // Jitter the grid position within its cell so blades don't sit on a perfect grid.
-    float jitterX = HashToSigned(seed, 0) * step * 0.5 * _JitterStrength;
-    float jitterZ = HashToSigned(seed, 1) * step * 0.5 * _JitterStrength;
+    float jitterX = HashToSigned(bladeHash, 0) * step * 0.5 * _JitterStrength;
+    float jitterZ = HashToSigned(bladeHash, 1) * step * 0.5 * _JitterStrength;
 
     float3 localPos = float3(id.x * step - halfSize + jitterX, 0, id.y * step - halfSize + jitterZ);
     float3 worldPos = tile.center + localPos;
 
     // Random facing direction (normalized 2D vector in the world XZ plane)
-    float facingAngle = HashToFloat01(seed, 2) * 6.28318530718; // 2*PI
+    float facingAngle = HashToFloat01(bladeHash, 2) * 6.28318530718; // 2*PI
     float2 facing = float2(cos(facingAngle), sin(facingAngle));
 
     // Per-blade shape variation around the base params
-    float height = max(0.01, _BaseHeight * (1.0 + HashToSigned(seed, 3) * _ShapeVariance));
-    float width = max(0.001, _BaseWidth * (1.0 + HashToSigned(seed, 4) * _ShapeVariance));
-    float tilt = _BaseTilt * (1.0 + HashToSigned(seed, 5) * _ShapeVariance);
-    float bend = _BaseBend * (1.0 + HashToSigned(seed, 6) * _ShapeVariance);
-    float sideCurve = HashToSigned(seed, 7) * _SideCurveStrength;
+    float height = max(0.01, _BaseHeight * (1.0 + HashToSigned(bladeHash, 3) * _ShapeVariance));
+    float width = max(0.001, _BaseWidth * (1.0 + HashToSigned(bladeHash, 4) * _ShapeVariance));
+    float tilt = _BaseTilt * (1.0 + HashToSigned(bladeHash, 5) * _ShapeVariance);
+    float bend = _BaseBend * (1.0 + HashToSigned(bladeHash, 6) * _ShapeVariance);
+    float sideCurve = HashToSigned(bladeHash, 7) * _SideCurveStrength;
+
+    // Placeholders until the Voronoi clump system assigns real per-clump
+    // values and the wind system drives per-blade wind response.
+    float clumpFacingAngle = HashToFloat01(bladeHash, 8) * 6.28318530718;
+    float2 clumpFacing = float2(cos(clumpFacingAngle), sin(clumpFacingAngle));
+    float3 clumpColor = float3(HashToFloat01(bladeHash, 9), HashToFloat01(bladeHash, 10), HashToFloat01(bladeHash, 11));
+    float windStrength = HashToFloat01(bladeHash, 12);
 
     // Output surviving grass to the Append Buffer
     GrassData grass;
@@ -81,6 +75,10 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
     grass.tilt = tilt;
     grass.bend = bend;
     grass.sideCurve = sideCurve;
+    grass.clumpFacing = clumpFacing;
+    grass.clumpColor = clumpColor;
+    grass.windStrength = windStrength;
+    grass.bladeHash = bladeHash;
 
     _GrassDataBuffer.Append(grass);
 }

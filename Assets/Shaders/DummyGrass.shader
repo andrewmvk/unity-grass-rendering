@@ -63,7 +63,7 @@ Shader "Custom/DummyGrass"
             #include "Packages/com.unity.render-pipelines.high-definition/Runtime/ShaderLibrary/ShaderVariables.hlsl"
             #include "GrassVertex.hlsl"
 
-            struct v2f { float4 pos : SV_POSITION; };
+            struct v2f { float4 pos : SV_POSITION; float3 clumpColor : TEXCOORD0; };
 
             v2f vert (uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
             {
@@ -72,12 +72,16 @@ Shader "Custom/DummyGrass"
                 float3 cameraRelativePos = GetCameraRelativePositionWS(absoluteWorldPos);
 
                 o.pos = TransformWorldToHClip(cameraRelativePos);
+                // Temp - verification only: tints each blade by its (placeholder) clumpColor
+                // so the new GrassData fields are visibly wired through before the Clumping logic exists.
+                o.clumpColor = GetGrassVertexClumpColor(instanceID);
                 return o;
             }
 
             float4 frag (v2f i) : SV_Target
             {
-                float3 color = float3(0.2, 0.8, 0.2);
+                float3 baseColor = float3(0.2, 0.8, 0.2);
+                float3 color = baseColor * (0.5 + 0.5 * i.clumpColor);
                 return float4(color, 1.0);
             }
             ENDHLSL

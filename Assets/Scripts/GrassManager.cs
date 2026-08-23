@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using UnityEngine;
 
 public class GrassManager : MonoBehaviour
@@ -8,13 +9,13 @@ public class GrassManager : MonoBehaviour
     public float tileSize = 10f;
     public int grassPerAxisPerTile = 16; // E.g., 16x16 = 256 blades per tile
 
-    [Header("Blade Shape - base values, randomized per-blade in Step 3")]
+    [Header("Blade Shape - base values")]
     public float bladeHeight = 1f;
     public float bladeWidth = 0.06f;
     public float bladeBend = 0.25f;
     public float bladeTilt = 1f;
 
-    [Header("Per-Blade Randomization (Step 3)")]
+    [Header("Per-Blade Randomization")]
     [Range(0f, 1f)] public float shapeVariance = 0.3f; // +/- fraction of base height/width/bend/tilt
     public float sideCurveStrength = 0.05f;            // max random sideways curve magnitude
     [Range(0f, 1f)] public float jitterStrength = 1f;  // fraction of grid step used as position jitter
@@ -24,23 +25,13 @@ public class GrassManager : MonoBehaviour
     public ComputeShader grassBuilderCS;
     public Material grassMaterial;
 
+    // Must be kept in sync with TileData in Assets/Shaders/GrassStructs.hlsl, this forces .NET to not reorder the fields in memory
+    [StructLayout(LayoutKind.Sequential)]
     public struct TileData { public Vector3 center; public uint tileId; }
+    private static readonly int tileDataStride = Marshal.SizeOf<TileData>();
 
-    // Bytes: center(12) + tileId(4) = 16.
-    private const int tileDataStride = 16;
-    public struct GrassData
-    {
-        public Vector3 position;
-        public Vector2 facing;
-        public float height;
-        public float width;
-        public float tilt;
-        public float bend;
-        public float sideCurve;
-    }
-
-    // Bytes: position(12) + facing(8) + height/width/tilt/bend/sideCurve(5*4=20) = 40.
-    private const int grassDataStride = 40;
+    // GrassData itself is populated entirely on the GPU. Only the byte stride is needed here to size the buffer (manually).
+    private const int grassDataStride = 68;
 
     private Bounds[] tileBounds;
     private TileData[] allTiles;

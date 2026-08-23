@@ -2,17 +2,8 @@
 #define GRASS_VERTEX_INCLUDED
 
 #include "GrassBladeSpine.hlsl"
+#include "GrassStructs.hlsl"
 
-struct GrassData
-{
-    float3 position;
-    float2 facing;
-    float height;
-    float width;
-    float tilt;
-    float bend;
-    float sideCurve;
-};
 StructuredBuffer<GrassData> _GrassDataBuffer;
 
 // Shared by both DummyGrass.shader passes: looks up this instance's GrassData
@@ -32,6 +23,11 @@ float3 GetGrassVertexWorldPosition(uint vertexID, uint instanceID)
     localPos = ApplyBladeFacing(localPos, grass.facing);
 
     return grass.position + localPos;
+}
+
+float3 GetGrassVertexClumpColor(uint instanceID)
+{
+    return _GrassDataBuffer[instanceID].clumpColor;
 }
 
 #endif
