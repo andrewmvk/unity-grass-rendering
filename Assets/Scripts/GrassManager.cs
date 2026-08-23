@@ -20,6 +20,10 @@ public class GrassManager : MonoBehaviour
     public float sideCurveStrength = 0.05f;            // max random sideways curve magnitude
     [Range(0f, 1f)] public float jitterStrength = 1f;  // fraction of grid step used as position jitter
 
+    [Header("Fine Culling")]
+    [Tooltip("Single-channel mask covering the whole world in XZ; >0.5 = grass allowed. Left empty, a 1x1 white texture is used (grass allowed everywhere).")]
+    public Texture2D controlTexture;
+
     [Header("References")]
     public Camera mainCamera;
     public ComputeShader grassBuilderCS;
@@ -46,6 +50,8 @@ public class GrassManager : MonoBehaviour
     private int numTilesPerAxis;
     private int totalTiles;
     private int buildKernel;
+    private Texture2D defaultControlTexture;
+    private Vector4[] frustumPlaneVectors;
 
     // Must match BLADE_VERTEX_COUNT in Assets/Shaders/GrassBladeSpine.hlsl
     // (15-vertex strip expanded into a non-indexed triangle list: 13 tris * 3 = 39).
@@ -56,6 +62,15 @@ public class GrassManager : MonoBehaviour
         if (mainCamera == null) mainCamera = Camera.main;
 
         buildKernel = grassBuilderCS.FindKernel("BuildGrass");
+
+        if (controlTexture == null)
+        {
+            defaultControlTexture = new Texture2D(1, 1, TextureFormat.R8, false);
+            defaultControlTexture.SetPixel(0, 0, Color.white);
+            defaultControlTexture.Apply();
+        }
+
+        frustumPlaneVectors = new Vector4[6];
 
         InitializeGrid();
         InitializeBuffers();
@@ -170,11 +185,37 @@ public class GrassManager : MonoBehaviour
         grassBuilderCS.SetFloat("_SideCurveStrength", sideCurveStrength);
         grassBuilderCS.SetFloat("_JitterStrength", jitterStrength);
 
+        for (int i = 0; i < 6; i++)
+        {
+            Plane plane = cameraFrustumPlanes[i];
+            frustumPlaneVectors[i] = new Vector4(plane.normal.x, plane.normal.y, plane.normal.z, plane.distance);
+        }
+        grassBuilderCS.SetVectorArray("_FrustumPlanes", frustumPlaneVectors);
+
+        grassBuilderCS.SetTexture(buildKernel, "_ControlTexture", controlTexture != null ? controlTexture : defaultControlTexture);
+        grassBuilderCS.SetVector("_WorldOriginXZ", new Vector4(transform.position.x - worldSize / 2f, transform.position.z - worldSize / 2f, 0, 0));
+        grassBuilderCS.SetFloat("_WorldSize", worldSize);
+        grassBuilderCS.SetFloat("_BladeBoundingRadius", ComputeBladeBoundingRadius());
+
         // Dispatch threads based on visible tiles
         int threadGroups = Mathf.CeilToInt(grassPerAxisPerTile / 8f);
 
         // Execute the BuildGrass compute shader 
         grassBuilderCS.Dispatch(buildKernel, threadGroups, threadGroups, visibleTilesList.Count);
+    }
+
+    // Worst-case root-to-vertex distance across all randomized blades, given the
+    // current base shape params. Triangle-inequality upper bound: since a vertex is
+    // root plus a sum of (height, tilt, bend, sideCurve, width) offsets, the sum of
+    // their max magnitudes is guaranteed to be >= the true bounding radius.
+    private float ComputeBladeBoundingRadius()
+    {
+        float maxHeight = bladeHeight * (1f + shapeVariance);
+        float maxTilt = Mathf.Abs(bladeTilt) * (1f + shapeVariance);
+        float maxBend = Mathf.Abs(bladeBend) * (1f + shapeVariance);
+        float maxWidth = bladeWidth * (1f + shapeVariance);
+
+        return maxHeight + maxTilt + maxBend + sideCurveStrength + maxWidth;
     }
 
     private void PrepareIndirectArgs()
@@ -198,5 +239,7 @@ public class GrassManager : MonoBehaviour
         visibleTilesBuffer?.Release();
         grassDataBuffer?.Release();
         argsBuffer?.Release();
+
+        if (defaultControlTexture != null) Destroy(defaultControlTexture);
     }
 }
