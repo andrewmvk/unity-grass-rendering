@@ -12,7 +12,7 @@ public class GrassManager : MonoBehaviour
     public float bladeHeight = 1f;
     public float bladeWidth = 0.06f;
     public float bladeBend = 0.25f;
-    public float bladeTilt = 0.08f;
+    public float bladeTilt = 1f;
 
     [Header("Per-Blade Randomization (Step 3)")]
     [Range(0f, 1f)] public float shapeVariance = 0.3f; // +/- fraction of base height/width/bend/tilt
@@ -171,7 +171,6 @@ public class GrassManager : MonoBehaviour
         grassBuilderCS.SetBuffer(buildKernel, "_GrassDataBuffer", grassDataBuffer);
         grassBuilderCS.SetFloat("_TileSize", tileSize);
         grassBuilderCS.SetInt("_GrassPerAxis", grassPerAxisPerTile);
-
         grassBuilderCS.SetFloat("_BaseHeight", bladeHeight);
         grassBuilderCS.SetFloat("_BaseWidth", bladeWidth);
         grassBuilderCS.SetFloat("_BaseBend", bladeBend);
@@ -190,8 +189,6 @@ public class GrassManager : MonoBehaviour
     private void PrepareIndirectArgs()
     {
         // Copy the append buffer's internal counter directly into argsBuffer's
-        // instance-count slot (byte offset 4 = uint index 1), skipping the
-        // intermediate countBuffer and the CS2 dispatch entirely.
         GraphicsBuffer.CopyCount(grassDataBuffer, argsBuffer, 4);
     }
 

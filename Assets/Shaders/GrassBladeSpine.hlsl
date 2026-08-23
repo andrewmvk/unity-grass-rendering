@@ -9,8 +9,6 @@
 #define BLADE_TRIANGLE_COUNT (BLADE_STRIP_VERTEX_COUNT - 2)
 #define BLADE_VERTEX_COUNT (BLADE_TRIANGLE_COUNT * 3)
 
-// Per-blade shape params, read from GrassData (Step 3) plus per-vertex facing.
-// There is no "base" param: the root is always the local origin.
 struct BladeParams
 {
     float height;
@@ -20,17 +18,14 @@ struct BladeParams
     float sideCurve;
 };
 
-// Cubic Bezier spine, following Sucker Punch's construction:
+// Cubic Bezier spine:
 //  - the tip sits at a height/tilt-derived offset from the root (facing is applied
-//    afterwards, by rotating the whole local frame - see ApplyBladeFacing);
+//    afterwards);
 //  - the midpoint lies on the root-to-tip line, pushed off it by "bend" along the
 //    perpendicular to that line (so bend=0 collapses the curve onto a straight line);
 //  - the two interior cubic control points sit 2/3 of the way from each endpoint
-//    to that midpoint (the standard degree-elevation of a quadratic with a single
-//    control point at the midpoint), so tilt and bend stay orthogonal controls.
-// sideCurve is this project's own addition (not in Sucker Punch's system): an
-// independent lateral (local X) ramp, applied after the tilt/bend curve below.
-// The curve otherwise lives in local YZ (Y = up along the blade, Z = lean direction).
+//    to that midpoint.
+//  - sideCurve is applied after the tilt/bend curve below.
 float3 EvaluateCubicBezier(BladeParams p, float t)
 {
     float3 root = float3(0, 0, 0);
@@ -39,10 +34,10 @@ float3 EvaluateCubicBezier(BladeParams p, float t)
     float3 toTip = tip - root;
     float toTipLen = length(toTip);
     float3 dir = toTipLen > 1e-6 ? toTip / toTipLen : float3(0, 1, 0);
-
-    // Perpendicular to dir within the same YZ plane (dir.x is always 0 here),
-    // equivalent to cross(float3(1,0,0), dir) and already unit length.
-    float3 perp = float3(0, -dir.z, dir.y);
+    float3 up = float3(0, 1, 0);
+    float3 perp = up - dot(up, dir) * dir;
+    float perpLen = length(perp);
+    perp = perpLen > 1e-5 ? perp / perpLen : float3(0, 0, 1);
 
     float3 mid = lerp(root, tip, 0.5) + perp * p.bend;
 

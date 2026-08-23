@@ -25,7 +25,7 @@ AppendStructuredBuffer<GrassData> _GrassDataBuffer;
 float _TileSize;
 uint _GrassPerAxis;
 
-// Baseline blade shape — each blade below is randomized around these values.
+// Baseline blade shape, each blade below is randomized around these values.
 float _BaseHeight;
 float _BaseWidth;
 float _BaseBend;
@@ -40,11 +40,10 @@ float _JitterStrength;    // fraction of the grid step used as position jitter, 
 [numthreads(8, 8, 1)]
 void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
 {
-    // groupID.z indexes into the current visible-tiles list, which is rebuilt (and
-    // reordered) every frame as the camera moves — it must never be used as a seed.
+    // groupID.z indexes into the current visible-tiles list, which is rebuilt every frame as the camera moves.
     TileData tile = _VisibleTiles[groupID.z];
 
-    // Ensure we don't process out-of-bounds threads if _GrassPerAxis isn't a multiple of 8
+    // Ensure it don't process out-of-bounds threads if _GrassPerAxis isn't a multiple of 8
     if (id.x >= _GrassPerAxis || id.y >= _GrassPerAxis)
         return;
 
@@ -52,8 +51,7 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
     float step = _TileSize / (float)_GrassPerAxis;
     float halfSize = _TileSize * 0.5f;
 
-    // Seed from the tile's stable grid id (not its transient visible-list index) plus
-    // grid cell, so it stays identical for a given blade across frames/dispatches.
+    // Seed from the tile's stable grid id plus grid cell, so it stays identical for a given blade across frames/dispatches.
     uint seed = tile.tileId * 92821u + id.x * 15761u + id.y * 60013u;
 
     // Jitter the grid position within its cell so blades don't sit on a perfect grid.
@@ -75,7 +73,6 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
     float sideCurve = HashToSigned(seed, 7) * _SideCurveStrength;
 
     // Output surviving grass to the Append Buffer
-    // (In Section 5, fine culling logic goes here before appending)
     GrassData grass;
     grass.position = worldPos;
     grass.facing = facing;
