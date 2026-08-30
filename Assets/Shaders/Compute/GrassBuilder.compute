@@ -2,6 +2,7 @@
 
 #include "GrassHash.hlsl"
 #include "Assets/Shaders/GrassStructs.hlsl"
+#include "Assets/Shaders/GrassTerrainSampling.hlsl"
 
 StructuredBuffer<TileData> _VisibleTiles;
 AppendStructuredBuffer<GrassData> _GrassDataBuffer;
@@ -20,11 +21,11 @@ float4 _FrustumPlanes[6];
 // whose root is just outside the frustum but whose tip still leans into view.
 float _BladeBoundingRadius;
 
-// Ground-validity mask: single-channel texture covering the whole world in
-// the XZ plane, sampled by world position. >0.5 = grass allowed to grow here.
+// Ground-validity mask: single-channel texture covering a fixed XZ rectangle.
+// >0.5 = grass allowed to grow here.
 Texture2D<float4> _ControlTexture;
 float2 _WorldOriginXZ;
-float _WorldSize;
+float2 _WorldSize;
 
 bool IsInsideFrustum(float3 worldPos, float radius)
 {
@@ -86,6 +87,9 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
 
     float3 localPos = float3(id.x * step - halfSize + jitterX, 0, id.y * step - halfSize + jitterZ);
     float3 worldPos = tile.center + localPos;
+
+    if (_UseTerrainHeight > 0.5)
+        worldPos.y = SampleTerrainHeight(worldPos.xz);
 
     // Fine culling: discard this thread (no Append, no further work) if the
     // blade's whole bounding sphere falls outside the frustum, or its root is

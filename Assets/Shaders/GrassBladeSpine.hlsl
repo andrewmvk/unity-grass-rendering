@@ -87,13 +87,17 @@ float3 GetBladeLocalPosition(BladeParams p, uint vertexID)
     return GetStripVertexPosition(p, stripIndex);
 }
 
-// Rotates a blade-local position around the vertical (Y) axis so the blade
-// points along "facing" (a normalized 2D direction in the world XZ plane).
-float3 ApplyBladeFacing(float3 localPos, float2 facing)
+// Builds the blade's world-space orientation from its facing direction and the
+// ground normal beneath it, then applies it to a blade-local position.
+float3 ApplyBladeOrientation(float3 localPos, float2 facing, float3 groundNormal)
 {
-    float rotatedX = localPos.x * facing.x - localPos.z * facing.y;
-    float rotatedZ = localPos.x * facing.y + localPos.z * facing.x;
-    return float3(rotatedX, localPos.y, rotatedZ);
+    float3 up = groundNormal;
+    float3 right = float3(facing.x, 0, facing.y) - up * dot(float3(facing.x, 0, facing.y), up);
+    float rightLen = length(right);
+    right = rightLen > 1e-5 ? right / rightLen : normalize(cross(up, float3(0, 0, 1)));
+    float3 forward = cross(right, up);
+
+    return right * localPos.x + up * localPos.y + forward * localPos.z;
 }
 
 #endif

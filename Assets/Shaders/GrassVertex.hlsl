@@ -3,6 +3,7 @@
 
 #include "GrassBladeSpine.hlsl"
 #include "GrassStructs.hlsl"
+#include "GrassTerrainSampling.hlsl"
 
 StructuredBuffer<GrassData> _GrassDataBuffer;
 
@@ -19,8 +20,10 @@ float3 GetGrassVertexWorldPosition(uint vertexID, uint instanceID)
     params.tilt = grass.tilt;
     params.sideCurve = grass.sideCurve;
 
+    float3 groundNormal = _UseTerrainHeight > 0.5 ? ComputeTerrainNormal(grass.position.xz) : float3(0, 1, 0);
+
     float3 localPos = GetBladeLocalPosition(params, vertexID);
-    localPos = ApplyBladeFacing(localPos, grass.facing);
+    localPos = ApplyBladeOrientation(localPos, grass.facing, groundNormal);
 
     return grass.position + localPos;
 }
