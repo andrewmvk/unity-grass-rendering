@@ -10,7 +10,6 @@ float2 _TerrainOriginXZ;
 float2 _TerrainSize;
 float _TerrainBaseY;
 float _TerrainHeightScale;
-float _UseTerrainHeight;
 
 SamplerState sampler_LinearClamp;
 

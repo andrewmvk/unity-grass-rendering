@@ -4,45 +4,46 @@ using UnityEngine;
 
 public class GrassManager : MonoBehaviour
 {
+    // Worst-case bounds (Sucker Punch's approach): buffers are allocated once at Start
+    // for these, so the sliders below can be tuned live without ever reallocating.
+    private const int MaxGrassPerAxisPerTile = 32;
+    private const int MaxRenderDistanceInTiles = 16;
+
+    // Tile size in world units. Hardcoded rather than a live-tunable field: changing
+    // it while playing invalidates every already-streamed tile's position/AABB.
+    private const float TileSize = 10f;
+
     [Header("Grid Streaming Settings")]
-    [Tooltip("Tiles stream in/out around this transform. Defaults to Main Camera if left empty.")]
-    public Transform followTarget;
-    public float tileSize = 10f;
-    public int grassPerAxisPerTile = 16; // E.g., 16x16 = 256 blades per tile
-    [Tooltip("Render distance expressed in tiles (radius). Tiles further than this from followTarget are unloaded.")]
-    public int renderDistanceInTiles = 8;
+    [SerializeField] [Tooltip("Tiles stream in/out around this transform. Defaults to Main Camera if left empty.")]
+    private Transform followTarget;
+    [SerializeField] [Tooltip("E.g. 16 = 16x16 = 256 blades per tile.")]
+    [Range(1, MaxGrassPerAxisPerTile)] private int grassPerAxisPerTile = 16;
+    [SerializeField] [Tooltip("Render distance expressed in tiles (radius). Tiles further than this from followTarget are unloaded.")]
+    [Range(1, MaxRenderDistanceInTiles)] private int renderDistanceInTiles = 8;
 
-    [Header("Terrain (optional)")]
-    [Tooltip("When assigned, blades are placed on this terrain's surface and tile AABBs hug its height. When empty, grass stays flat at y=0.")]
-    public Terrain terrain;
-
-    [Header("Fallback World Extent (used only without a Terrain)")]
-    [Tooltip("Size of the square region the control-texture mapping and fallback tile-height AABB use when no Terrain is assigned.")]
-    public float worldSize = 200f;
+    [Header("Terrain")]
+    [SerializeField] [Tooltip("Required. Blades are placed on this terrain's surface, follow its slope, and are masked by its painted layer-0 texture.")]
+    private Terrain terrain;
 
     [Header("Blade Shape - base values")]
-    public float bladeHeight = 1f;
-    public float bladeWidth = 0.06f;
-    public float bladeBend = 0.25f;
-    public float bladeTilt = 1f;
+    [SerializeField] private float bladeHeight = 1f;
+    [SerializeField] private float bladeWidth = 0.06f;
+    [SerializeField] private float bladeBend = 0.25f;
+    [SerializeField] private float bladeTilt = 1f;
 
     [Header("Per-Blade Randomization")]
-    [Range(0f, 1f)] public float shapeVariance = 0.3f; // +/- fraction of base height/width/bend/tilt
-    public float sideCurveStrength = 0.05f;            // max random sideways curve magnitude
-    [Range(0f, 1f)] public float jitterStrength = 1f;  // fraction of grid step used as position jitter
-
-    [Header("Fine Culling")]
-    [Tooltip("Single-channel mask; >0.5 = grass allowed. Left empty, a 1x1 white texture is used (grass allowed everywhere).")]
-    public Texture2D controlTexture;
+    [SerializeField] [Range(0f, 1f)] private float shapeVariance = 0.3f; // +/- fraction of base height/width/bend/tilt
+    [SerializeField] private float sideCurveStrength = 0.05f;            // max random sideways curve magnitude
+    [SerializeField] [Range(0f, 1f)] private float jitterStrength = 1f;  // fraction of grid step used as position jitter
 
     [Header("References")]
-    public Camera mainCamera;
-    public ComputeShader grassBuilderCS;
-    public Material grassMaterial;
+    [SerializeField] private Camera mainCamera;
+    [SerializeField] private ComputeShader grassBuilderCS;
+    [SerializeField] private Material grassMaterial;
 
     // Must be kept in sync with TileData in Assets/Shaders/GrassStructs.hlsl, this forces .NET to not reorder the fields in memory
     [StructLayout(LayoutKind.Sequential)]
-    public struct TileData { public Vector3 center; public uint tileId; }
+    private struct TileData { public Vector3 center; public uint tileId; }
     private static readonly int tileDataStride = Marshal.SizeOf<TileData>();
 
     // GrassData itself is populated entirely on the GPU. Only the byte stride is needed here to size the buffer (manually).
@@ -65,8 +66,6 @@ public class GrassManager : MonoBehaviour
 
     private int maxTilesInView;
     private int buildKernel;
-    private Texture2D defaultControlTexture;
-    private Texture2D defaultHeightmapTexture;
     private Vector4[] frustumPlaneVectors;
 
     // Must match BLADE_VERTEX_COUNT in Assets/Shaders/GrassBladeSpine.hlsl
@@ -75,24 +74,17 @@ public class GrassManager : MonoBehaviour
 
     void Start()
     {
+        if (terrain == null)
+        {
+            Debug.LogError("GrassManager requires a Terrain reference.", this);
+            enabled = false;
+            return;
+        }
+
         if (mainCamera == null) mainCamera = Camera.main;
         if (followTarget == null) followTarget = mainCamera.transform;
 
         buildKernel = grassBuilderCS.FindKernel("BuildGrass");
-
-        if (controlTexture == null)
-        {
-            defaultControlTexture = new Texture2D(1, 1, TextureFormat.R8, false);
-            defaultControlTexture.SetPixel(0, 0, Color.white);
-            defaultControlTexture.Apply();
-        }
-
-        if (terrain == null)
-        {
-            defaultHeightmapTexture = new Texture2D(1, 1, TextureFormat.R8, false);
-            defaultHeightmapTexture.SetPixel(0, 0, Color.black);
-            defaultHeightmapTexture.Apply();
-        }
 
         frustumPlaneVectors = new Vector4[6];
 
@@ -102,7 +94,8 @@ public class GrassManager : MonoBehaviour
 
     private void InitializeStreamingPool()
     {
-        int span = renderDistanceInTiles * 2 + 1;
+        // Sized for the worst case (MaxRenderDistanceInTiles), avoids reallocation based on current render distance
+        int span = MaxRenderDistanceInTiles * 2 + 1;
         maxTilesInView = span * span;
 
         activeTiles = new Dictionary<Vector2Int, TileEntry>(maxTilesInView);
@@ -115,8 +108,8 @@ public class GrassManager : MonoBehaviour
     {
         visibleTilesBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, maxTilesInView, tileDataStride);
 
-        // Max possible grass blades: every currently-streamed tile, fully dense.
-        int maxGrassCount = maxTilesInView * grassPerAxisPerTile * grassPerAxisPerTile;
+        // Worst case: every streamable tile, at MaxGrassPerAxisPerTile density.
+        int maxGrassCount = maxTilesInView * MaxGrassPerAxisPerTile * MaxGrassPerAxisPerTile;
 
         // Append buffer for grass instances
         grassDataBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Append, maxGrassCount, grassDataStride);
@@ -146,8 +139,8 @@ public class GrassManager : MonoBehaviour
     private void UpdateTileStreaming()
     {
         Vector3 followPos = followTarget.position;
-        int centerX = Mathf.FloorToInt((followPos.x - transform.position.x) / tileSize);
-        int centerZ = Mathf.FloorToInt((followPos.z - transform.position.z) / tileSize);
+        int centerX = Mathf.FloorToInt((followPos.x - transform.position.x) / TileSize);
+        int centerZ = Mathf.FloorToInt((followPos.z - transform.position.z) / TileSize);
 
         desiredCoords.Clear();
         for (int dx = -renderDistanceInTiles; dx <= renderDistanceInTiles; dx++)
@@ -180,8 +173,8 @@ public class GrassManager : MonoBehaviour
 
     private TileEntry LoadTile(Vector2Int coord)
     {
-        float centerX = transform.position.x + (coord.x + 0.5f) * tileSize;
-        float centerZ = transform.position.z + (coord.y + 0.5f) * tileSize;
+        float centerX = transform.position.x + (coord.x + 0.5f) * TileSize;
+        float centerZ = transform.position.z + (coord.y + 0.5f) * TileSize;
 
         (float minY, float maxY) = SampleTileHeightRange(centerX, centerZ);
 
@@ -190,7 +183,7 @@ public class GrassManager : MonoBehaviour
         float verticalPadding = 2f * ComputeBladeBoundingRadius();
         Bounds bounds = new Bounds(
             new Vector3(centerX, (minY + maxY) * 0.5f, centerZ),
-            new Vector3(tileSize, Mathf.Max(0.01f, maxY - minY) + verticalPadding, tileSize));
+            new Vector3(TileSize, Mathf.Max(0.01f, maxY - minY) + verticalPadding, TileSize));
 
         TileData data = new TileData
         {
@@ -203,13 +196,7 @@ public class GrassManager : MonoBehaviour
 
     private (float minY, float maxY) SampleTileHeightRange(float centerX, float centerZ)
     {
-        if (terrain == null)
-        {
-            // Preserves the old fixed-height assumption used before Step 7.
-            return (-2.5f, 2.5f);
-        }
-
-        float half = tileSize * 0.5f;
+        float half = TileSize * 0.5f;
         float minY = float.MaxValue;
         float maxY = float.MinValue;
 
@@ -279,7 +266,7 @@ public class GrassManager : MonoBehaviour
 
         grassBuilderCS.SetBuffer(buildKernel, "_VisibleTiles", visibleTilesBuffer);
         grassBuilderCS.SetBuffer(buildKernel, "_GrassDataBuffer", grassDataBuffer);
-        grassBuilderCS.SetFloat("_TileSize", tileSize);
+        grassBuilderCS.SetFloat("_TileSize", TileSize);
         grassBuilderCS.SetInt("_GrassPerAxis", grassPerAxisPerTile);
         grassBuilderCS.SetFloat("_BaseHeight", bladeHeight);
         grassBuilderCS.SetFloat("_BaseWidth", bladeWidth);
@@ -297,37 +284,21 @@ public class GrassManager : MonoBehaviour
         grassBuilderCS.SetVectorArray("_FrustumPlanes", frustumPlaneVectors);
         grassBuilderCS.SetFloat("_BladeBoundingRadius", ComputeBladeBoundingRadius());
 
-        grassBuilderCS.SetTexture(buildKernel, "_ControlTexture", controlTexture != null ? controlTexture : defaultControlTexture);
+        // Terrain sampling params are set as shader globals since GrassVertex.hlsl also reads
+        // them, to derive ground normals for blade orientation at render time (GrassTerrainSampling.hlsl).
+        TerrainData data = terrain.terrainData;
+        Shader.SetGlobalTexture("_HeightmapTexture", data.heightmapTexture);
+        Shader.SetGlobalVector("_TerrainOriginXZ", new Vector4(terrain.transform.position.x, terrain.transform.position.z, 0, 0));
+        Shader.SetGlobalVector("_TerrainSize", new Vector4(data.size.x, data.size.z, 0, 0));
+        Shader.SetGlobalFloat("_TerrainBaseY", terrain.transform.position.y);
+        Shader.SetGlobalFloat("_TerrainHeightScale", data.size.y * 2f);
 
-        // Terrain sampling params are set as shader globals since GrassVertex.hlsl also reads them, to derive ground normals
-        // for blade orientation at render time, done at GrassTerrainSampling.hlsl.
-        bool useTerrain = terrain != null;
-        Shader.SetGlobalFloat("_UseTerrainHeight", useTerrain ? 1f : 0f);
-
-        if (useTerrain)
-        {
-            TerrainData data = terrain.terrainData;
-            Shader.SetGlobalTexture("_HeightmapTexture", data.heightmapTexture);
-            Shader.SetGlobalVector("_TerrainOriginXZ", new Vector4(terrain.transform.position.x, terrain.transform.position.z, 0, 0));
-            Shader.SetGlobalVector("_TerrainSize", new Vector4(data.size.x, data.size.z, 0, 0));
-            Shader.SetGlobalFloat("_TerrainBaseY", terrain.transform.position.y);
-            Shader.SetGlobalFloat("_TerrainHeightScale", data.size.y * 2f);
-
-            // The control mask paints over the same footprint as the terrain.
-            grassBuilderCS.SetVector("_WorldOriginXZ", new Vector4(terrain.transform.position.x, terrain.transform.position.z, 0, 0));
-            grassBuilderCS.SetVector("_WorldSize", new Vector4(data.size.x, data.size.z, 0, 0));
-        }
-        else
-        {
-            Shader.SetGlobalTexture("_HeightmapTexture", defaultHeightmapTexture);
-            Shader.SetGlobalVector("_TerrainOriginXZ", Vector4.zero);
-            Shader.SetGlobalVector("_TerrainSize", new Vector4(1, 1, 0, 0));
-            Shader.SetGlobalFloat("_TerrainBaseY", 0f);
-            Shader.SetGlobalFloat("_TerrainHeightScale", 0f);
-
-            grassBuilderCS.SetVector("_WorldOriginXZ", new Vector4(transform.position.x - worldSize / 2f, transform.position.z - worldSize / 2f, 0, 0));
-            grassBuilderCS.SetVector("_WorldSize", new Vector4(worldSize, worldSize, 0, 0));
-        }
+        // Ground-validity mask: the terrain's own painted layer-0 texture (its splat weight),
+        // instead of a separate hand-authored mask - falls back to "always valid" if the
+        // terrain has no layers painted at all.
+        Texture2D[] alphamaps = data.alphamapTextures;
+        Texture2D grassMask = alphamaps.Length > 0 ? alphamaps[0] : Texture2D.whiteTexture;
+        grassBuilderCS.SetTexture(buildKernel, "_ControlTexture", grassMask);
 
         // Dispatch threads based on visible tiles
         int threadGroups = Mathf.CeilToInt(grassPerAxisPerTile / 8f);
@@ -360,20 +331,10 @@ public class GrassManager : MonoBehaviour
     {
         // Pass the generated buffer to the rendering material
         grassMaterial.SetBuffer("_GrassDataBuffer", grassDataBuffer);
-        
-        float span = (renderDistanceInTiles * 2 + 1) * tileSize + 2f * ComputeBladeBoundingRadius();
-        float centerY;
-        float height;
-        if (terrain != null)
-        {
-            centerY = terrain.transform.position.y + terrain.terrainData.size.y * 0.5f;
-            height = terrain.terrainData.size.y + 2f * ComputeBladeBoundingRadius();
-        }
-        else
-        {
-            centerY = 0f;
-            height = 10f;
-        }
+
+        float span = (renderDistanceInTiles * 2 + 1) * TileSize + 2f * ComputeBladeBoundingRadius();
+        float centerY = terrain.transform.position.y + terrain.terrainData.size.y * 0.5f;
+        float height = terrain.terrainData.size.y + 2f * ComputeBladeBoundingRadius();
 
         Vector3 center = new Vector3(followTarget.position.x, centerY, followTarget.position.z);
         Bounds bounds = new Bounds(center, new Vector3(span, height, span));
@@ -385,8 +346,5 @@ public class GrassManager : MonoBehaviour
         visibleTilesBuffer?.Release();
         grassDataBuffer?.Release();
         argsBuffer?.Release();
-
-        if (defaultControlTexture != null) Destroy(defaultControlTexture);
-        if (defaultHeightmapTexture != null) Destroy(defaultHeightmapTexture);
     }
 }

@@ -1088,11 +1088,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GrassManager
   followTarget: {fileID: 1823688467}
-  tileSize: 10
   grassPerAxisPerTile: 16
   renderDistanceInTiles: 8
   terrain: {fileID: 1583307900}
-  worldSize: 200
   bladeHeight: 1
   bladeWidth: 0.06
   bladeBend: 0.25
@@ -1100,7 +1098,6 @@ MonoBehaviour:
   shapeVariance: 0.3
   sideCurveStrength: 0.05
   jitterStrength: 1
-  controlTexture: {fileID: 0}
   mainCamera: {fileID: 1823688466}
   grassBuilderCS: {fileID: 7200000, guid: 1b8bb2e9391f40945a3cc24c1fded579, type: 3}
   grassMaterial: {fileID: 2100000, guid: 5868cbd8923a50743a55cf8ef66fc17d, type: 2}
