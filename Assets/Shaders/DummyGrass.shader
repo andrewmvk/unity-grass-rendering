@@ -63,25 +63,75 @@ Shader "Custom/DummyGrass"
             #include "Packages/com.unity.render-pipelines.high-definition/Runtime/ShaderLibrary/ShaderVariables.hlsl"
             #include "GrassVertex.hlsl"
 
-            struct v2f { float4 pos : SV_POSITION; float3 clumpColor : TEXCOORD0; };
+            float3 _GrassLightDir;
+            float4 _GrassLightColor;
+            float4 _GrassAmbientColor;
+            float4 _GrassBaseColorLow;
+            float4 _GrassBaseColorHigh;
+            float4 _GrassTipColorLow;
+            float4 _GrassTipColorHigh;
+            float _GrassShadeJitterStrength;
+            float _GrassSpecPower;
+            float _GrassSpecStrength;
+            float _GrassSSSStrength;
+            float _GrassRootAOStrength;
+            float _GrassRootAOHeight;
+
+            struct v2f
+            {
+                float4 pos : SV_POSITION;
+                float3 positionWS : TEXCOORD0; // camera-relative
+                float3 normalWS : TEXCOORD1;
+                float heightPercent : TEXCOORD2;
+                nointerpolation uint bladeHash : TEXCOORD3;
+            };
 
             v2f vert (uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
             {
-                v2f o;
-                float3 absoluteWorldPos = GetGrassVertexWorldPosition(vertexID, instanceID);
-                float3 cameraRelativePos = GetCameraRelativePositionWS(absoluteWorldPos);
+                GrassVertexData g = GetGrassVertexData(vertexID, instanceID);
+                float3 cameraRelativePos = GetCameraRelativePositionWS(g.positionWS);
 
+                v2f o;
                 o.pos = TransformWorldToHClip(cameraRelativePos);
-                // Temp - verification only: tints each blade by its (placeholder) clumpColor
-                // so the new GrassData fields are visibly wired through before the Clumping logic exists.
-                o.clumpColor = GetGrassVertexClumpColor(instanceID);
+                o.positionWS = cameraRelativePos;
+                o.normalWS = g.normalWS;
+                o.heightPercent = g.heightPercent;
+                o.bladeHash = g.bladeHash;
                 return o;
             }
 
-            float4 frag (v2f i) : SV_Target
+            float4 frag (v2f i, bool isFrontFace : SV_IsFrontFace) : SV_Target
             {
-                float3 baseColor = float3(0.2, 0.8, 0.2);
-                float3 color = baseColor * (0.5 + 0.5 * i.clumpColor);
+                float3 normal = normalize(i.normalWS) * (isFrontFace ? 1.0 : -1.0);
+                float3 viewDir = normalize(-i.positionWS);
+                float3 lightDir = normalize(_GrassLightDir);
+
+                float3 baseColor = lerp(_GrassBaseColorLow.rgb, _GrassBaseColorHigh.rgb, HashToFloat01(i.bladeHash, 40));
+                float3 tipColor = lerp(_GrassTipColorLow.rgb, _GrassTipColorHigh.rgb, HashToFloat01(i.bladeHash, 41));
+                float3 albedo = lerp(baseColor, tipColor, pow(saturate(i.heightPercent), 1.5));
+                albedo *= 1.0 + HashToSigned(i.bladeHash, 42) * _GrassShadeJitterStrength;
+
+                // Fake AO: dense grass self-shadows near the root, fading out fast with height.
+                float rootAO = lerp(1.0 - _GrassRootAOStrength, 1.0, saturate(i.heightPercent / max(_GrassRootAOHeight, 1e-4)));
+                float occlusion = rootAO * rootAO;
+                albedo *= occlusion;
+
+                // Half-Lambert wrap diffuse, so the unlit side of a blade doesn't go fully black.
+                float wrap = 0.5;
+                float diffuseTerm = saturate((dot(normal, lightDir) + wrap) / (1.0 + wrap));
+                float3 diffuse = diffuseTerm * _GrassLightColor.rgb * albedo;
+
+                float3 halfDir = normalize(lightDir + viewDir);
+                float specNormalization = (_GrassSpecPower * 0.5 + 1.0) / PI;
+                float specTerm = specNormalization * pow(saturate(dot(normal, halfDir)), _GrassSpecPower);
+                float3 specular = specTerm * _GrassSpecStrength * _GrassLightColor.rgb * occlusion;
+
+                // Fake subsurface scattering: light glows through the blade when backlit.
+                float backLight = saturate((dot(viewDir, -lightDir) + wrap) / (1.0 + wrap));
+                float3 subsurface = pow(backLight, 2.0) * _GrassSSSStrength * _GrassLightColor.rgb * albedo * (0.4 + 0.6 * i.heightPercent);
+
+                float3 ambient = _GrassAmbientColor.rgb * albedo;
+                float3 color = ambient + diffuse + specular + subsurface;
                 return float4(color, 1.0);
             }
             ENDHLSL

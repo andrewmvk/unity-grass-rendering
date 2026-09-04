@@ -1088,16 +1088,29 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GrassManager
   followTarget: {fileID: 1823688467}
-  grassPerAxisPerTile: 16
+  grassPerAxisPerTile: 32
   renderDistanceInTiles: 8
   terrain: {fileID: 1583307900}
-  bladeHeight: 1
-  bladeWidth: 0.06
+  bladeHeight: 1.3
+  bladeWidth: 0.09
   bladeBend: 0.25
   bladeTilt: 1
   shapeVariance: 0.3
   sideCurveStrength: 0.05
   jitterStrength: 1
+  sunLight: {fileID: 157207113}
+  lightIntensity: 1
+  ambientColor: {r: 0.19607845, g: 0.25490198, b: 0.10588236, a: 1}
+  baseColorLow: {r: 0.085696965, g: 0.101, b: 0.045909084, a: 1}
+  baseColorHigh: {r: 0.08, g: 0.18, b: 0.03, a: 1}
+  tipColorLow: {r: 0.35, g: 0.45, b: 0.12, a: 1}
+  tipColorHigh: {r: 0.41197932, g: 0.5377358, b: 0.13950695, a: 1}
+  shadeJitterStrength: 0.25
+  specularPower: 24
+  specularStrength: 0.025
+  subsurfaceStrength: 2
+  rootAOStrength: 0.5
+  rootAOHeight: 0.5
   mainCamera: {fileID: 1823688466}
   grassBuilderCS: {fileID: 7200000, guid: 1b8bb2e9391f40945a3cc24c1fded579, type: 3}
   grassMaterial: {fileID: 2100000, guid: 5868cbd8923a50743a55cf8ef66fc17d, type: 2}

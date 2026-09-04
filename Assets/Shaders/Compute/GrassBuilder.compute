@@ -108,12 +108,11 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
     float bend = _BaseBend * (1.0 + HashToSigned(bladeHash, 6) * _ShapeVariance);
     float sideCurve = HashToSigned(bladeHash, 7) * _SideCurveStrength;
 
-    // Placeholders until the Voronoi clump system assigns real per-clump
-    // values and the wind system drives per-blade wind response.
+    // Placeholder until the Voronoi clump system assigns a real per-clump
+    // facing, and the wind system drives per-blade wind response.
     float clumpFacingAngle = HashToFloat01(bladeHash, 8) * 6.28318530718;
     float2 clumpFacing = float2(cos(clumpFacingAngle), sin(clumpFacingAngle));
-    float3 clumpColor = float3(HashToFloat01(bladeHash, 9), HashToFloat01(bladeHash, 10), HashToFloat01(bladeHash, 11));
-    float windStrength = HashToFloat01(bladeHash, 12);
+    float windStrength = HashToFloat01(bladeHash, 9);
 
     // Output surviving grass to the Append Buffer
     GrassData grass;
@@ -125,7 +124,6 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
     grass.bend = bend;
     grass.sideCurve = sideCurve;
     grass.clumpFacing = clumpFacing;
-    grass.clumpColor = clumpColor;
     grass.windStrength = windStrength;
     grass.bladeHash = bladeHash;
 

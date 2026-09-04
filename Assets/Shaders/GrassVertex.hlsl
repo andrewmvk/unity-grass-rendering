@@ -7,32 +7,51 @@
 
 StructuredBuffer<GrassData> _GrassDataBuffer;
 
-// Shared by both DummyGrass.shader passes: looks up this instance's GrassData
-// and returns its absolute (non camera-relative) world-space vertex position.
+BladeParams GetBladeParams(GrassData grass)
+{
+    BladeParams p;
+    p.height = grass.height;
+    p.width = grass.width;
+    p.bend = grass.bend;
+    p.tilt = grass.tilt;
+    p.sideCurve = grass.sideCurve;
+    return p;
+}
+
+// Depth-only pass: absolute (non camera-relative) world-space vertex position.
 float3 GetGrassVertexWorldPosition(uint vertexID, uint instanceID)
 {
     GrassData grass = _GrassDataBuffer[instanceID];
+    BladeParams params = GetBladeParams(grass);
+    float3 groundNormal = ComputeTerrainNormal(grass.position.xz);
+    float3 localPos = GetBladeLocalPosition(params, vertexID);
+    return grass.position + ApplyBladeOrientation(localPos, grass.facing, groundNormal);
+}
 
-    BladeParams params;
-    params.height = grass.height;
-    params.width = grass.width;
-    params.bend = grass.bend;
-    params.tilt = grass.tilt;
-    params.sideCurve = grass.sideCurve;
+struct GrassVertexData
+{
+    float3 positionWS;
+    float3 normalWS;
+    float heightPercent;
+    uint bladeHash;
+};
 
-    // Derived from the terrain's own height data here, at render time,
-    // rather than stored per-blade in GrassData.
+// Forward pass: position plus everything the lighting model needs.
+GrassVertexData GetGrassVertexData(uint vertexID, uint instanceID)
+{
+    GrassData grass = _GrassDataBuffer[instanceID];
+    BladeParams params = GetBladeParams(grass);
     float3 groundNormal = ComputeTerrainNormal(grass.position.xz);
 
     float3 localPos = GetBladeLocalPosition(params, vertexID);
-    localPos = ApplyBladeOrientation(localPos, grass.facing, groundNormal);
+    float3 localNormal = GetBladeLocalNormal(params, vertexID, grass.bladeHash);
 
-    return grass.position + localPos;
-}
-
-float3 GetGrassVertexClumpColor(uint instanceID)
-{
-    return _GrassDataBuffer[instanceID].clumpColor;
+    GrassVertexData o;
+    o.positionWS = grass.position + ApplyBladeOrientation(localPos, grass.facing, groundNormal);
+    o.normalWS = normalize(ApplyBladeOrientation(localNormal, grass.facing, groundNormal));
+    o.heightPercent = GetBladeHeightPercent(vertexID);
+    o.bladeHash = grass.bladeHash;
+    return o;
 }
 
 #endif

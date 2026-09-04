@@ -6,7 +6,7 @@ public class GrassManager : MonoBehaviour
 {
     // Worst-case bounds (Sucker Punch's approach): buffers are allocated once at Start
     // for these, so the sliders below can be tuned live without ever reallocating.
-    private const int MaxGrassPerAxisPerTile = 32;
+    private const int MaxGrassPerAxisPerTile = 64;
     private const int MaxRenderDistanceInTiles = 16;
 
     // Tile size in world units. Hardcoded rather than a live-tunable field: changing
@@ -36,6 +36,24 @@ public class GrassManager : MonoBehaviour
     [SerializeField] private float sideCurveStrength = 0.05f;            // max random sideways curve magnitude
     [SerializeField] [Range(0f, 1f)] private float jitterStrength = 1f;  // fraction of grid step used as position jitter
 
+    [Header("Lighting")]
+    [SerializeField] [Tooltip("Directional light driving diffuse/specular/subsurface. Falls back to a fixed direction if left empty.")]
+    private Light sunLight;
+    [SerializeField] [Range(0f, 4f)] private float lightIntensity = 1f;
+    [SerializeField] private Color ambientColor = new Color(0.18f, 0.22f, 0.14f);
+    [SerializeField] private Color baseColorLow = new Color(0.05f, 0.12f, 0.02f);
+    [SerializeField] private Color baseColorHigh = new Color(0.08f, 0.18f, 0.03f);
+    [SerializeField] private Color tipColorLow = new Color(0.35f, 0.45f, 0.12f);
+    [SerializeField] private Color tipColorHigh = new Color(0.55f, 0.6f, 0.2f);
+    [SerializeField] [Range(0f, 1f)] private float shadeJitterStrength = 0.25f;
+    [SerializeField] [Range(0f, 256f)] private float specularPower = 24f;
+    [SerializeField] [Range(0f, 1f)] private float specularStrength = 0.15f;
+    [SerializeField] [Range(0f, 4f)] private float subsurfaceStrength = 1.2f;
+    [SerializeField] [Range(0f, 1f)] [Tooltip("How dark the fake root AO gets at the very base of the blade.")]
+    private float rootAOStrength = 0.5f;
+    [SerializeField] [Range(0.01f, 1f)] [Tooltip("Height percent at which the fake root AO fades to fully lit.")]
+    private float rootAOHeight = 0.5f;
+
     [Header("References")]
     [SerializeField] private Camera mainCamera;
     [SerializeField] private ComputeShader grassBuilderCS;
@@ -47,7 +65,7 @@ public class GrassManager : MonoBehaviour
     private static readonly int tileDataStride = Marshal.SizeOf<TileData>();
 
     // GrassData itself is populated entirely on the GPU. Only the byte stride is needed here to size the buffer (manually).
-    private const int grassDataStride = 68;
+    private const int grassDataStride = 56;
 
     private struct TileEntry { public TileData data; public Bounds bounds; }
 
@@ -236,8 +254,29 @@ public class GrassManager : MonoBehaviour
         {
             DispatchGrassBuilder();
             PrepareIndirectArgs();
+            UpdateLightingGlobals();
             RenderGrass();
         }
+    }
+
+    private void UpdateLightingGlobals()
+    {
+        Vector3 lightDir = sunLight != null ? -sunLight.transform.forward : new Vector3(0.3f, 0.8f, 0.2f).normalized;
+        Color lightColor = (sunLight != null ? sunLight.color : Color.white) * lightIntensity;
+
+        Shader.SetGlobalVector("_GrassLightDir", lightDir);
+        Shader.SetGlobalColor("_GrassLightColor", lightColor);
+        Shader.SetGlobalColor("_GrassAmbientColor", ambientColor);
+        Shader.SetGlobalColor("_GrassBaseColorLow", baseColorLow);
+        Shader.SetGlobalColor("_GrassBaseColorHigh", baseColorHigh);
+        Shader.SetGlobalColor("_GrassTipColorLow", tipColorLow);
+        Shader.SetGlobalColor("_GrassTipColorHigh", tipColorHigh);
+        Shader.SetGlobalFloat("_GrassShadeJitterStrength", shadeJitterStrength);
+        Shader.SetGlobalFloat("_GrassSpecPower", specularPower);
+        Shader.SetGlobalFloat("_GrassSpecStrength", specularStrength);
+        Shader.SetGlobalFloat("_GrassSSSStrength", subsurfaceStrength);
+        Shader.SetGlobalFloat("_GrassRootAOStrength", rootAOStrength);
+        Shader.SetGlobalFloat("_GrassRootAOHeight", rootAOHeight);
     }
 
     private void PerformCPUCulling()
