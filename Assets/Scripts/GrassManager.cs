@@ -14,16 +14,18 @@ public class GrassManager : MonoBehaviour
     private const float TileSize = 10f;
 
     [Header("Grid Streaming Settings")]
-    [SerializeField] [Tooltip("Tiles stream in/out around this transform. Defaults to Main Camera if left empty.")]
-    private Transform followTarget;
     [SerializeField] [Tooltip("E.g. 16 = 16x16 = 256 blades per tile.")]
     [Range(1, MaxGrassPerAxisPerTile)] private int grassPerAxisPerTile = 16;
-    [SerializeField] [Tooltip("Render distance expressed in tiles (radius). Tiles further than this from followTarget are unloaded.")]
+    [SerializeField] [Tooltip("Render distance expressed in tiles (radius). Tiles further than this from Main Camera are unloaded.")]
     [Range(1, MaxRenderDistanceInTiles)] private int renderDistanceInTiles = 8;
+    [SerializeField] [Range(0.05f, 1f)] [Tooltip("Fraction of render distance where blades start shrinking toward zero height, reaching it exactly at render distance.")]
+    private float heightFadeStartFraction = 0.75f;
 
     [Header("Terrain")]
     [SerializeField] [Tooltip("Required. Blades are placed on this terrain's surface, follow its slope, and are masked by its painted layer-0 texture.")]
     private Terrain terrain;
+    [SerializeField] [Range(0f, 1f)] [Tooltip("How strongly a blade's facing is pulled downhill as slope steepens (baked in once per blade at build time). 0 = always random facing, 1 = fully downhill on any slope. Blades themselves still grow straight up regardless of this value - see GrassBladeSpine.hlsl.")]
+    private float slopeLeanStrength = 0.6f;
 
     [Header("Blade Shape - base values")]
     [SerializeField] private float bladeHeight = 1f;
@@ -55,7 +57,8 @@ public class GrassManager : MonoBehaviour
     private float rootAOHeight = 0.5f;
 
     [Header("References")]
-    [SerializeField] private Camera mainCamera;
+    [SerializeField] [Tooltip("Drives frustum culling, tile streaming, and the distance fade. Defaults to Camera.main if left empty.")]
+    private Camera mainCamera;
     [SerializeField] private ComputeShader grassBuilderCS;
     [SerializeField] private Material grassMaterial;
 
@@ -81,14 +84,15 @@ public class GrassManager : MonoBehaviour
     private GraphicsBuffer visibleTilesBuffer;
     private GraphicsBuffer grassDataBuffer;
     private GraphicsBuffer argsBuffer;
+    private GraphicsBuffer bladeIndexBuffer;
 
     private int maxTilesInView;
     private int buildKernel;
     private Vector4[] frustumPlaneVectors;
 
-    // Must match BLADE_VERTEX_COUNT in Assets/Shaders/GrassBladeSpine.hlsl
-    // (15-vertex strip expanded into a non-indexed triangle list: 13 tris * 3 = 39).
-    private const uint bladeVertexCount = 39;
+    // 13 triangles * 3 corners, indexed into the 15-vertex strip (BLADE_STRIP_VERTEX_COUNT
+    // in Assets/Shaders/GrassBladeSpine.hlsl) via bladeIndexBuffer.
+    private const uint bladeIndexCount = 39;
 
     void Start()
     {
@@ -100,7 +104,6 @@ public class GrassManager : MonoBehaviour
         }
 
         if (mainCamera == null) mainCamera = Camera.main;
-        if (followTarget == null) followTarget = mainCamera.transform;
 
         buildKernel = grassBuilderCS.FindKernel("BuildGrass");
 
@@ -132,17 +135,36 @@ public class GrassManager : MonoBehaviour
         // Append buffer for grass instances
         grassDataBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Append, maxGrassCount, grassDataStride);
 
-        // Indirect Draw Arguments buffer (5 uints)
+        // Indirect Draw Indexed Arguments buffer (5 uints)
         argsBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, 1, 5 * sizeof(uint));
-        uint[] args = new uint[] { bladeVertexCount, 0, 0, 0, 0 };
+        uint[] args = new uint[] { bladeIndexCount, 0, 0, 0, 0 };
         /*
-        * 1 - Vertex count per instance: bladeVertexCount (must match BLADE_VERTEX_COUNT in GrassBladeSpine.hlsl)
-        * 2 - Instance count: initaliy 0
-        * 3 - Start vertex: 0
-        * 4 - Start instance: 0
-        * 5 - Padding or unused value
+        * 1 - Index count per instance: bladeIndexCount
+        * 2 - Instance count: initially 0
+        * 3 - Start index: 0
+        * 4 - Base vertex: 0
+        * 5 - Start instance: 0
         */
         argsBuffer.SetData(args);
+
+        bladeIndexBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Index, (int)bladeIndexCount, sizeof(ushort));
+        bladeIndexBuffer.SetData(BuildBladeIndexBuffer());
+    }
+
+    // Expands the 15-vertex strip into 13 triangles as indices instead of raw
+    // vertexIDs, so the GPU's post-transform cache can reuse a corner shared by
+    // adjacent triangles. Odd triangles swap their first two corners to avoid a winding bug.
+    private static ushort[] BuildBladeIndexBuffer()
+    {
+        ushort[] indices = new ushort[bladeIndexCount];
+        for (uint i = 0; i < bladeIndexCount; i++)
+        {
+            uint triangleIndex = i / 3;
+            uint corner = i % 3;
+            if ((triangleIndex & 1) == 1 && corner < 2) corner = 1 - corner;
+            indices[i] = (ushort)(triangleIndex + corner);
+        }
+        return indices;
     }
 
     // Encodes a (possibly negative) tile grid coordinate into a stable uint id,
@@ -156,9 +178,14 @@ public class GrassManager : MonoBehaviour
 
     private void UpdateTileStreaming()
     {
-        Vector3 followPos = followTarget.position;
+        Vector3 followPos = mainCamera.transform.position;
         int centerX = Mathf.FloorToInt((followPos.x - transform.position.x) / TileSize);
         int centerZ = Mathf.FloorToInt((followPos.z - transform.position.z) / TileSize);
+
+        // Circular (distance-to-camera) cutoff instead of the square tile-grid bounds,
+        // for a rounder streaming edge and a distribution the height fade below can match.
+        float renderDistanceWorld = renderDistanceInTiles * TileSize;
+        float renderDistanceWorldSqr = renderDistanceWorld * renderDistanceWorld;
 
         desiredCoords.Clear();
         for (int dx = -renderDistanceInTiles; dx <= renderDistanceInTiles; dx++)
@@ -166,6 +193,13 @@ public class GrassManager : MonoBehaviour
             for (int dz = -renderDistanceInTiles; dz <= renderDistanceInTiles; dz++)
             {
                 Vector2Int coord = new Vector2Int(centerX + dx, centerZ + dz);
+
+                (float tileCenterX, float tileCenterZ) = GetTileCenterXZ(coord);
+                float offsetX = tileCenterX - followPos.x;
+                float offsetZ = tileCenterZ - followPos.z;
+                if (offsetX * offsetX + offsetZ * offsetZ > renderDistanceWorldSqr)
+                    continue;
+
                 desiredCoords.Add(coord);
 
                 if (!activeTiles.ContainsKey(coord))
@@ -189,10 +223,14 @@ public class GrassManager : MonoBehaviour
         }
     }
 
+    private (float x, float z) GetTileCenterXZ(Vector2Int coord)
+    {
+        return (transform.position.x + (coord.x + 0.5f) * TileSize, transform.position.z + (coord.y + 0.5f) * TileSize);
+    }
+
     private TileEntry LoadTile(Vector2Int coord)
     {
-        float centerX = transform.position.x + (coord.x + 0.5f) * TileSize;
-        float centerZ = transform.position.z + (coord.y + 0.5f) * TileSize;
+        (float centerX, float centerZ) = GetTileCenterXZ(coord);
 
         (float minY, float maxY) = SampleTileHeightRange(centerX, centerZ);
 
@@ -255,8 +293,17 @@ public class GrassManager : MonoBehaviour
             DispatchGrassBuilder();
             PrepareIndirectArgs();
             UpdateLightingGlobals();
+            UpdateDistanceFadeGlobals();
             RenderGrass();
         }
+    }
+
+    private void UpdateDistanceFadeGlobals()
+    {
+        float renderDistanceWorld = renderDistanceInTiles * TileSize;
+        Shader.SetGlobalFloat("_GrassFadeStartDist", renderDistanceWorld * heightFadeStartFraction);
+        Shader.SetGlobalFloat("_GrassFadeEndDist", renderDistanceWorld);
+        Shader.SetGlobalVector("_GrassCameraPosition", mainCamera.transform.position);
     }
 
     private void UpdateLightingGlobals()
@@ -314,6 +361,7 @@ public class GrassManager : MonoBehaviour
         grassBuilderCS.SetFloat("_ShapeVariance", shapeVariance);
         grassBuilderCS.SetFloat("_SideCurveStrength", sideCurveStrength);
         grassBuilderCS.SetFloat("_JitterStrength", jitterStrength);
+        grassBuilderCS.SetFloat("_SlopeLeanStrength", slopeLeanStrength);
 
         for (int i = 0; i < 6; i++)
         {
@@ -323,8 +371,9 @@ public class GrassManager : MonoBehaviour
         grassBuilderCS.SetVectorArray("_FrustumPlanes", frustumPlaneVectors);
         grassBuilderCS.SetFloat("_BladeBoundingRadius", ComputeBladeBoundingRadius());
 
-        // Terrain sampling params are set as shader globals since GrassVertex.hlsl also reads
-        // them, to derive ground normals for blade orientation at render time (GrassTerrainSampling.hlsl).
+        // Terrain sampling params are set as shader globals (rather than passed directly to the
+        // kernel) purely out of convenience - only GrassBuilder.compute reads them, once per
+        // blade, to place it on the surface and bake its downhill facing lean (GrassTerrainSampling.hlsl).
         TerrainData data = terrain.terrainData;
         Shader.SetGlobalTexture("_HeightmapTexture", data.heightmapTexture);
         Shader.SetGlobalVector("_TerrainOriginXZ", new Vector4(terrain.transform.position.x, terrain.transform.position.z, 0, 0));
@@ -375,9 +424,9 @@ public class GrassManager : MonoBehaviour
         float centerY = terrain.transform.position.y + terrain.terrainData.size.y * 0.5f;
         float height = terrain.terrainData.size.y + 2f * ComputeBladeBoundingRadius();
 
-        Vector3 center = new Vector3(followTarget.position.x, centerY, followTarget.position.z);
+        Vector3 center = new Vector3(mainCamera.transform.position.x, centerY, mainCamera.transform.position.z);
         Bounds bounds = new Bounds(center, new Vector3(span, height, span));
-        Graphics.DrawProceduralIndirect(grassMaterial, bounds, MeshTopology.Triangles, argsBuffer, 0, null, null, UnityEngine.Rendering.ShadowCastingMode.Off, true, gameObject.layer);
+        Graphics.DrawProceduralIndirect(grassMaterial, bounds, MeshTopology.Triangles, bladeIndexBuffer, argsBuffer, 0, null, null, UnityEngine.Rendering.ShadowCastingMode.Off, true, gameObject.layer);
     }
 
     private void OnDestroy()
@@ -385,5 +434,6 @@ public class GrassManager : MonoBehaviour
         visibleTilesBuffer?.Release();
         grassDataBuffer?.Release();
         argsBuffer?.Release();
+        bladeIndexBuffer?.Release();
     }
 }

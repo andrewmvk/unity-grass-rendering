@@ -61,6 +61,10 @@ float _ShapeVariance;    // fraction of base height/width/bend/tilt, e.g. 0.3 = 
 float _SideCurveStrength; // max magnitude of the random sideways curve
 float _JitterStrength;    // fraction of the grid step used as position jitter, 0-1
 
+// How strongly a blade's facing gets pulled toward downhill as slope steepens,
+// 0 = always random, 1 = fully downhill on any non-flat ground.
+float _SlopeLeanStrength;
+
 // 8x8 threads per group (64 blades evaluated per group)
 [numthreads(8, 8, 1)]
 void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
@@ -99,7 +103,20 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
 
     // Random facing direction (normalized 2D vector in the world XZ plane)
     float facingAngle = HashToFloat01(bladeHash, 2) * 6.28318530718; // 2*PI
-    float2 facing = float2(cos(facingAngle), sin(facingAngle));
+    float2 randomFacing = float2(cos(facingAngle), sin(facingAngle));
+
+    // Ground normal, sampled once per blade (not per vertex - see GrassVertex.hlsl).
+    // Its horizontal component already points downhill (ComputeTerrainNormal derives
+    // it as the negative height gradient), so it doubles as the downhill direction.
+    float3 groundNormal = ComputeTerrainNormal(worldPos.xz);
+    float2 downhill = groundNormal.xz;
+    float slope = saturate(length(downhill)); // ~0 flat, approaches 1 as slope steepens
+
+    // Rotate downhill by -90 degrees so ApplyBladeOrientation's "forward" axis
+    // (which sits 90 degrees CCW from facing) ends up pointing downhill, letting
+    // the blade's existing tilt/bend lean that way on slopes.
+    float2 downhillLeanFacing = slope > 1e-5 ? float2(downhill.y, -downhill.x) / slope : randomFacing;
+    float2 facing = normalize(lerp(randomFacing, downhillLeanFacing, slope * _SlopeLeanStrength));
 
     // Per-blade shape variation around the base params
     float height = max(0.01, _BaseHeight * (1.0 + HashToSigned(bladeHash, 3) * _ShapeVariance));

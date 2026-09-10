@@ -21,25 +21,34 @@ Shader "Custom/DummyGrass"
 
             #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
             #include "Packages/com.unity.render-pipelines.high-definition/Runtime/ShaderLibrary/ShaderVariables.hlsl"
+            #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/NormalBuffer.hlsl"
             #include "GrassVertex.hlsl"
 
-            struct v2f { float4 pos : SV_POSITION; };
+            struct v2f { float4 pos : SV_POSITION; float3 normalWS : TEXCOORD0; };
 
             v2f vert (uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
             {
+                GrassVertexData g = GetGrassVertexData(vertexID, instanceID);
+                float3 cameraRelativePos = GetCameraRelativePositionWS(g.positionWS);
+
                 v2f o;
-                float3 absoluteWorldPos = GetGrassVertexWorldPosition(vertexID, instanceID);
-
-                // HDRP Fix: Convert Absolute World Space to Camera-Relative
-                float3 cameraRelativePos = GetCameraRelativePositionWS(absoluteWorldPos);
-
                 o.pos = TransformWorldToHClip(cameraRelativePos);
+                o.normalWS = g.normalWS;
                 return o;
             }
 
-            float4 frag (v2f i) : SV_Target
+            // SV_Target0 here IS HDRP's normal buffer for Forward-rendered opaque geometry (used by
+            // SSAO/SSR/contact shadows and AOV normal export), not a color output - assumes MSAA off
+            // (this project's HDRP asset has it disabled; with MSAA on HDRP shifts this to SV_Target1).
+            float4 frag (v2f i, bool isFrontFace : SV_IsFrontFace) : SV_Target
             {
-                return float4(0, 0, 0, 0);
+                NormalData normalData;
+                normalData.normalWS = normalize(i.normalWS) * (isFrontFace ? 1.0 : -1.0);
+                normalData.perceptualRoughness = 1.0;
+
+                float4 outNormalBuffer;
+                EncodeIntoNormalBuffer(normalData, outNormalBuffer);
+                return outNormalBuffer;
             }
             ENDHLSL
         }

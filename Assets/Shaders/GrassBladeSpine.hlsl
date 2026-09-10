@@ -4,12 +4,10 @@
 #include "Compute/GrassHash.hlsl"
 
 // 15-vertex strip: 7 tapering left/right pairs + 1 tip.
-// Expanded to 39 non-indexed vertices (13 triangles), since
-// DrawProceduralIndirect has no triangle-strip topology.
+// Submitted as an indexed triangle list (39 indices, GrassManager.cs), so
+// vertexID below is already a strip index - no strip topology needed.
 #define BLADE_ROW_COUNT 7
 #define BLADE_STRIP_VERTEX_COUNT 15
-#define BLADE_TRIANGLE_COUNT (BLADE_STRIP_VERTEX_COUNT - 2)
-#define BLADE_VERTEX_COUNT (BLADE_TRIANGLE_COUNT * 3)
 
 // Fake-round cross-section: left/right vertices get their normal tilted away
 // from the flat face, so a single-sided ribbon reads as a rounded blade under lighting.
@@ -105,29 +103,13 @@ float3 GetStripVertexPosition(BladeParams p, uint stripIndex)
     return center + float3(sideSign * width, 0, 0);
 }
 
-// Maps a non-indexed triangle-list vertexID back to its strip position.
-// Odd triangles swap their first two corners to avoid "winding" bug
-uint GetStripIndexFromVertexID(uint vertexID)
+float3 GetBladeLocalPosition(BladeParams p, uint stripIndex)
 {
-    uint triangleIndex = vertexID / 3;
-    uint corner = vertexID % 3;
-
-    if ((triangleIndex & 1) == 1 && corner < 2)
-        corner = 1 - corner;
-
-    return triangleIndex + corner;
+    return GetStripVertexPosition(p, stripIndex);
 }
 
-// Expands the 15-vertex strip into a non-indexed triangle list.
-// vertexID must be in [0, BLADE_VERTEX_COUNT) i.e. [0, BLADE_TRIANGLE_COUNT * 3).
-float3 GetBladeLocalPosition(BladeParams p, uint vertexID)
+float GetBladeHeightPercent(uint stripIndex)
 {
-    return GetStripVertexPosition(p, GetStripIndexFromVertexID(vertexID));
-}
-
-float GetBladeHeightPercent(uint vertexID)
-{
-    uint stripIndex = GetStripIndexFromVertexID(vertexID);
     bool isTip = stripIndex == (BLADE_STRIP_VERTEX_COUNT - 1);
     uint row = stripIndex / 2;
     return isTip ? 1.0 : row / (float)BLADE_ROW_COUNT;
@@ -141,16 +123,15 @@ float3 RotateAroundY(float3 v, float angle)
 }
 
 // Local-space normal for the fake-round grass blade. Follows the spine's tangent
-float3 GetBladeLocalNormal(BladeParams p, uint vertexID, uint bladeHash)
+float3 GetBladeLocalNormal(BladeParams p, uint stripIndex, uint bladeHash)
 {
-    float t = GetBladeHeightPercent(vertexID);
+    float t = GetBladeHeightPercent(stripIndex);
     float3 tangent = EvaluateCubicBezierTangent(p, t);
 
     float2 yz = float2(tangent.y, tangent.z);
     float yzLen = length(yz);
     float3 faceNormal = yzLen > 1e-5 ? float3(0, -yz.y, yz.x) / yzLen : float3(0, 0, 1);
 
-    uint stripIndex = GetStripIndexFromVertexID(vertexID);
     float sideSign = (stripIndex % 2 == 0) ? -1.0 : 1.0;
     float jitter = HashToSigned(bladeHash, 30) * BLADE_ROUNDNESS_JITTER;
     float angle = sideSign * (BLADE_ROUNDNESS_ANGLE + jitter);
@@ -158,14 +139,11 @@ float3 GetBladeLocalNormal(BladeParams p, uint vertexID, uint bladeHash)
     return RotateAroundY(faceNormal, angle);
 }
 
-// Builds the blade's world-space orientation from its facing direction and the
-// ground normal beneath it, then applies it to a blade-local position.
-float3 ApplyBladeOrientation(float3 localPos, float2 facing, float3 groundNormal)
+// Builds the blade's world-space orientation from its facing direction.
+float3 ApplyBladeOrientation(float3 localPos, float2 facing)
 {
-    float3 up = groundNormal;
-    float3 right = float3(facing.x, 0, facing.y) - up * dot(float3(facing.x, 0, facing.y), up);
-    float rightLen = length(right);
-    right = rightLen > 1e-5 ? right / rightLen : normalize(cross(up, float3(0, 0, 1)));
+    float3 up = float3(0, 1, 0);
+    float3 right = normalize(float3(facing.x, 0, facing.y));
     float3 forward = cross(right, up);
 
     return right * localPos.x + up * localPos.y + forward * localPos.z;
