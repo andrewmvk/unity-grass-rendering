@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 public class GrassManager : MonoBehaviour
 {
@@ -93,6 +94,17 @@ public class GrassManager : MonoBehaviour
     // 13 triangles * 3 corners, indexed into the 15-vertex strip (BLADE_STRIP_VERTEX_COUNT
     // in Assets/Shaders/GrassBladeSpine.hlsl) via bladeIndexBuffer.
     private const uint bladeIndexCount = 39;
+    private bool initialized;
+
+    private void OnEnable()
+    {
+        RenderPipelineManager.beginCameraRendering += OnBeginCameraRendering;
+    }
+
+    private void OnDisable()
+    {
+        RenderPipelineManager.beginCameraRendering -= OnBeginCameraRendering;
+    }
 
     void Start()
     {
@@ -111,6 +123,8 @@ public class GrassManager : MonoBehaviour
 
         InitializeStreamingPool();
         InitializeBuffers();
+
+        initialized = true;
     }
 
     private void InitializeStreamingPool()
@@ -283,17 +297,20 @@ public class GrassManager : MonoBehaviour
         }
     }
 
-    void Update()
+    // Runs right before the camera's render commands are recorded - avoid racing against the camera's update method
+    private void OnBeginCameraRendering(ScriptableRenderContext context, Camera camera)
     {
+        if (!initialized || camera != mainCamera) return;
+
         UpdateTileStreaming();
         PerformCPUCulling();
 
         if (visibleTilesList.Count > 0)
         {
+            UpdateDistanceFadeGlobals();
             DispatchGrassBuilder();
             PrepareIndirectArgs();
             UpdateLightingGlobals();
-            UpdateDistanceFadeGlobals();
             RenderGrass();
         }
     }

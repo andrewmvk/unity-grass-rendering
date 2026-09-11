@@ -28,9 +28,10 @@ BladeParams GetBladeParams(GrassData grass)
     p.tilt = grass.tilt;
     p.sideCurve = grass.sideCurve;
 
-    float distToCamera = length(grass.position - _GrassCameraPosition);
-    float fade = smoothstep(_GrassFadeStartDist, _GrassFadeEndDist, distToCamera);
-    p.height *= 1.0 - fade;
+    float shrink = GetGrassFadeShrink(grass.position, _GrassCameraPosition, _GrassFadeStartDist, _GrassFadeEndDist);
+    p.height *= shrink;
+    p.tilt *= shrink;
+    p.bend *= shrink;
 
     return p;
 }

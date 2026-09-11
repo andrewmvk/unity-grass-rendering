@@ -25,6 +25,11 @@ float _BladeBoundingRadius;
 // painted "grass" layer covers each texel). >0.5 = grass allowed to grow here.
 Texture2D<float4> _ControlTexture;
 
+// Blades already faded to nothing are skipped
+float _GrassFadeStartDist;
+float _GrassFadeEndDist;
+float3 _GrassCameraPosition;
+
 bool IsInsideFrustum(float3 worldPos, float radius)
 {
     for (int i = 0; i < 6; i++)
@@ -99,6 +104,10 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
     // blade's whole bounding sphere falls outside the frustum, or its root is
     // off valid ground.
     if (!IsInsideFrustum(worldPos, _BladeBoundingRadius) || !IsValidGround(worldPos))
+        return;
+
+    // Distance fade has already shrunk this blade to nothing - skip it entirely
+    if (GetGrassFadeShrink(worldPos, _GrassCameraPosition, _GrassFadeStartDist, _GrassFadeEndDist) <= 0.0)
         return;
 
     // Random facing direction (normalized 2D vector in the world XZ plane)

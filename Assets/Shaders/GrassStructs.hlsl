@@ -26,4 +26,16 @@ struct GrassData
     uint bladeHash;
 };
 
+// Below this, a blade's distance-fade shrink factor is treated as fully zero.
+#define GRASS_FADE_CUTOFF 0.05
+
+// Distance-based shrink factor: 1 at/inside fadeStartDist, 0 at/beyond fadeEndDist.
+float GetGrassFadeShrink(float3 grassPosition, float3 cameraPosition, float fadeStartDist, float fadeEndDist)
+{
+    float distToCamera = length(grassPosition - cameraPosition);
+    float fade = smoothstep(fadeStartDist, fadeEndDist, distToCamera);
+    float shrink = 1.0 - fade;
+    return shrink < GRASS_FADE_CUTOFF ? 0.0 : shrink;
+}
+
 #endif
