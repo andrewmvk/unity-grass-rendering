@@ -47,8 +47,8 @@ public class GrassManager : MonoBehaviour
     private float clumpJitterStrength = 1f;
     [SerializeField] [Range(0f, 1f)] [Tooltip("How strongly a blade's facing is pulled toward its clump's shared facing direction. 0 = ignore clumping, 1 = fully comb toward the clump direction.")]
     private float clumpFacingStrength = 0.45f;
-    [SerializeField] private Color clumpColorA = new Color(85f, 192f, 66f);
-    [SerializeField] private Color clumpColorB = new Color(255f, 209f, 45f);
+    [SerializeField] private Color clumpColorA = new Color(0.33f, 0.75f, 0.26f);
+    [SerializeField] private Color clumpColorB = new Color(1f, 0.82f, 0.18f);
     [SerializeField] [Range(0f, 1f)] [Tooltip("How strongly the per-clump color tint is applied over the base hash-based tint.")]
     private float clumpColorStrength = 0.5f;
     [SerializeField] [Range(0f, 1f)] [Tooltip("How much shorter blades get the further they sit from their clump's center. 0 = uniform height, 1 = blades taper to minimum height at the clump cell edge.")]
