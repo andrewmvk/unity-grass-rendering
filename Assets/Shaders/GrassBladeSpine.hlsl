@@ -3,9 +3,8 @@
 
 #include "Compute/GrassHash.hlsl"
 
-// 15-vertex strip: 7 tapering left/right pairs + 1 tip.
-// Submitted as an indexed triangle list (39 indices, GrassManager.cs), so
-// vertexID below is already a strip index - no strip topology needed.
+// 15-vertex strip: 7 tapering left/right pairs plus 1 tip. Submitted as an indexed
+// triangle list (39 indices, see GrassManager.cs), so vertexID is already a strip index.
 #if defined(_GRASS_LOD_LOW)
     #define BLADE_STRIP_VERTEX_COUNT 3
 #else
@@ -28,13 +27,11 @@ struct BladeParams
 };
 
 // Cubic Bezier spine:
-//  - the tip sits at a height/tilt-derived offset from the root (facing is applied
-//    afterwards);
+//  - the tip sits at a height/tilt offset from the root (facing is applied after);
 //  - the midpoint lies on the root-to-tip line, pushed off it by "bend" along the
-//    perpendicular to that line (so bend=0 collapses the curve onto a straight line);
-//  - the two interior cubic control points sit 2/3 of the way from each endpoint
-//    to that midpoint.
-//  - sideCurve is applied after the tilt/bend curve below.
+//    line's perpendicular (bend = 0 collapses the curve to a straight line);
+//  - the two interior control points sit 2/3 of the way from each endpoint to the midpoint;
+//  - sideCurve is applied after this tilt/bend curve.
 void GetBezierControlPoints(BladeParams p, out float3 root, out float3 p1, out float3 p2, out float3 tip)
 {
     root = float3(0, 0, 0);
@@ -135,7 +132,8 @@ float3 RotateAroundY(float3 v, float angle)
     return float3(v.x * c + v.z * s, v.y, -v.x * s + v.z * c);
 }
 
-// Local-space normal for the fake-round grass blade. Follows the spine's tangent
+// Local-space normal for the fake-round grass blade: perpendicular to the spine's
+// tangent, then rotated outward per side to fake a rounded cross-section.
 float3 GetBladeLocalNormal(BladeParams p, uint stripIndex, uint bladeHash)
 {
     float t = GetBladeHeightPercent(stripIndex);

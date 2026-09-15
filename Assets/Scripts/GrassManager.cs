@@ -5,13 +5,13 @@ using UnityEngine.Rendering;
 
 public class GrassManager : MonoBehaviour
 {
-    // Worst-case bounds (Sucker Punch's approach): buffers are allocated once at Start
-    // for these, so the sliders below can be tuned live without ever reallocating.
+    // Worst-case bounds (Sucker Punch's approach). Buffers are sized for these once at
+    // Start, so the sliders below can be tuned live without ever reallocating.
     private const int MaxGrassPerAxisPerTile = 64;
     private const int MaxRenderDistanceInTiles = 64;
 
-    // Tile size in world units. Hardcoded rather than a live-tunable field: changing
-    // it while playing invalidates every already-streamed tile's position/AABB.
+    // Tile size in world units. Not a live-tunable field: changing it while playing
+    // would invalidate every already-streamed tile's position and AABB.
     private const float TileSize = 10f;
 
     [Header("Grid Streaming Settings")]
@@ -75,17 +75,17 @@ public class GrassManager : MonoBehaviour
     [SerializeField] private ComputeShader grassBuilderCS;
     [SerializeField] private Material grassMaterial;
 
-    // Must be kept in sync with TileData in Assets/Shaders/GrassStructs.hlsl, this forces .NET to not reorder the fields in memory
+    // Must match TileData in Assets/Shaders/GrassStructs.hlsl exactly (field order and types).
     [StructLayout(LayoutKind.Sequential)]
     private struct TileData { public Vector3 center; public uint tileId; }
     private static readonly int tileDataStride = Marshal.SizeOf<TileData>();
 
-    // GrassData itself is populated entirely on the GPU. Only the byte stride is needed here to size the buffer (manually).
+    // GrassData is populated entirely on the GPU; only its byte stride is needed here to size the buffer.
     private const int grassDataStride = 56;
 
     private struct TileEntry { public TileData data; public Bounds bounds; }
 
-    // Streamed tile pool, keyed by stable grid coordinate (independent of load/unload order).
+    // Streamed tile pool, keyed by stable grid coordinate.
     private Dictionary<Vector2Int, TileEntry> activeTiles;
     private HashSet<Vector2Int> desiredCoords;
     private List<Vector2Int> coordsToRemove;
@@ -93,7 +93,6 @@ public class GrassManager : MonoBehaviour
     private List<TileData> visibleTilesList;
     private readonly Plane[] cameraFrustumPlanes = new Plane[6];
 
-    // Buffers
     private GraphicsBuffer visibleTilesBuffer;
     private GraphicsBuffer grassDataBuffer;
     private GraphicsBuffer argsBuffer;
@@ -108,8 +107,8 @@ public class GrassManager : MonoBehaviour
     private int buildKernel;
     private Vector4[] frustumPlaneVectors;
 
-    // 13 triangles * 3 corners, indexed into the 15-vertex strip (BLADE_STRIP_VERTEX_COUNT
-    // in Assets/Shaders/GrassBladeSpine.hlsl) via bladeIndexBuffer.
+    // 13 triangles x 3 corners, indexing the 15-vertex strip (BLADE_STRIP_VERTEX_COUNT
+    // in Assets/Shaders/GrassBladeSpine.hlsl).
     private const uint bladeIndexCount = 39;
 
     // Single triangle: root-left, root-right, tip.
@@ -157,7 +156,7 @@ public class GrassManager : MonoBehaviour
 
     private void InitializeStreamingPool()
     {
-        // Sized for the worst case (MaxRenderDistanceInTiles), avoids reallocation based on current render distance
+        // Sized for MaxRenderDistanceInTiles (the worst case), so it never needs to grow when render distance changes.
         int span = MaxRenderDistanceInTiles * 2 + 1;
         maxTilesInView = span * span;
 
@@ -174,9 +173,8 @@ public class GrassManager : MonoBehaviour
         // Worst case: every streamable tile, at MaxGrassPerAxisPerTile density.
         int maxGrassCount = maxTilesInView * MaxGrassPerAxisPerTile * MaxGrassPerAxisPerTile;
 
-        // Append buffer for grass instances. Both LOD tiers are sized for the
-        // same worst case, since either could hold every visible blade
-        // (e.g. all of them beyond lodSwitchDistance).
+        // Append buffer for grass instances. Both LOD tiers use the same worst-case
+        // size, since either could hold every visible blade (e.g. all beyond lodSwitchDistance).
         grassDataBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Append, maxGrassCount, grassDataStride);
         grassDataBufferLow = new GraphicsBuffer(GraphicsBuffer.Target.Append, maxGrassCount, grassDataStride);
 
@@ -199,9 +197,9 @@ public class GrassManager : MonoBehaviour
         return buffer;
     }
 
-    // Expands the 15-vertex strip into 13 triangles as indices instead of raw
-    // vertexIDs, so the GPU's post-transform cache can reuse a corner shared by
-    // adjacent triangles. Odd triangles swap their first two corners to avoid a winding bug.
+    // Expands the 15-vertex strip into 13 triangles as indices (instead of raw
+    // vertexIDs), so the GPU's post-transform cache can reuse shared corners.
+    // Odd triangles swap their first two corners to fix triangle winding.
     private static ushort[] BuildBladeIndexBuffer()
     {
         ushort[] indices = new ushort[bladeIndexCount];
@@ -215,8 +213,8 @@ public class GrassManager : MonoBehaviour
         return indices;
     }
 
-    // Encodes a (possibly negative) tile grid coordinate into a stable uint id,
-    // so a tile's random seed only depends on its position, not on load order.
+    // Encodes a tile grid coordinate (can be negative) into a stable uint id, so a
+    // tile's random seed depends only on its position, not on load order.
     private static uint EncodeTileId(Vector2Int coord)
     {
         uint ux = (uint)(coord.x + 32768);
@@ -231,7 +229,7 @@ public class GrassManager : MonoBehaviour
         int centerZ = Mathf.FloorToInt((followPos.z - transform.position.z) / TileSize);
 
         // Circular (distance-to-camera) cutoff instead of the square tile-grid bounds,
-        // for a rounder streaming edge and a distribution the height fade below can match.
+        // for a rounder streaming edge that matches the height fade below.
         float renderDistanceWorld = renderDistanceInTiles * TileSize;
         float renderDistanceWorldSqr = renderDistanceWorld * renderDistanceWorld;
 
@@ -320,7 +318,6 @@ public class GrassManager : MonoBehaviour
 
     private void OnDrawGizmos()
     {
-        // Draw the streamed tile pool in the editor for visualization
         if (activeTiles == null) return;
 
         foreach (TileEntry entry in activeTiles.Values)
@@ -331,9 +328,10 @@ public class GrassManager : MonoBehaviour
         }
     }
 
-    // Runs right before the camera's render commands are recorded - avoid racing against the camera's update method.
-    // Streaming/culling/build stay gated to the main camera (that's what the frustum and distance fade are computed
-    // against). The draw is gated to the main camera plus the Scene view camera, so debugging still shows grass
+    // Runs right before the camera records its render commands, avoiding a race with the
+    // camera's own update. Streaming, culling, and the build dispatch are gated to the main
+    // camera only, since that's what the frustum and distance fade use. Drawing is also
+    // gated to the Scene view camera, so grass stays visible while debugging there.
     private void OnBeginCameraRendering(ScriptableRenderContext context, Camera camera)
     {
         if (!initialized) return;
@@ -438,9 +436,9 @@ public class GrassManager : MonoBehaviour
         grassBuilderCS.SetVectorArray("_FrustumPlanes", frustumPlaneVectors);
         grassBuilderCS.SetFloat("_BladeBoundingRadius", ComputeBladeBoundingRadius());
 
-        // Terrain sampling params are set as shader globals (rather than passed directly to the
-        // kernel) purely out of convenience - only GrassBuilder.compute reads them, once per
-        // blade, to place it on the surface and bake its downhill facing lean (GrassTerrainSampling.hlsl).
+        // Terrain sampling params are set as shader globals instead of passed to the kernel
+        // directly, for convenience: only GrassBuilder.compute reads them, once per blade, to
+        // place it on the surface and bake its downhill facing lean (GrassTerrainSampling.hlsl).
         TerrainData data = terrain.terrainData;
         Shader.SetGlobalTexture("_HeightmapTexture", data.heightmapTexture);
         Shader.SetGlobalVector("_TerrainOriginXZ", new Vector4(terrain.transform.position.x, terrain.transform.position.z, 0, 0));
@@ -449,23 +447,20 @@ public class GrassManager : MonoBehaviour
         Shader.SetGlobalFloat("_TerrainHeightScale", data.size.y * 2f);
 
         // Ground-validity mask: the terrain's own painted layer-0 texture (its splat weight),
-        // instead of a separate hand-authored mask - falls back to "always valid" if the
-        // terrain has no layers painted at all.
+        // instead of a separate hand-authored mask. Falls back to "always valid" if the
+        // terrain has no layers painted.
         Texture2D[] alphamaps = data.alphamapTextures;
         Texture2D grassMask = alphamaps.Length > 0 ? alphamaps[0] : Texture2D.whiteTexture;
         grassBuilderCS.SetTexture(buildKernel, "_ControlTexture", grassMask);
 
-        // Dispatch threads based on visible tiles
         int threadGroups = Mathf.CeilToInt(grassPerAxisPerTile / 8f);
-
-        // Execute the BuildGrass compute shader
         grassBuilderCS.Dispatch(buildKernel, threadGroups, threadGroups, visibleTilesList.Count);
     }
 
-    // Worst-case root-to-vertex distance across all randomized blades, given the
-    // current base shape params. Triangle-inequality upper bound: since a vertex is
-    // root plus a sum of (height, tilt, bend, sideCurve, width) offsets, the sum of
-    // their max magnitudes is guaranteed to be >= the true bounding radius.
+    // Worst-case root-to-vertex distance across all randomized blades, given the current
+    // base shape params. This is a triangle-inequality upper bound: a vertex is the root
+    // plus a sum of offsets (height, tilt, bend, sideCurve, width), so the sum of their
+    // max magnitudes is always >= the true bounding radius.
     private float ComputeBladeBoundingRadius()
     {
         float maxHeight = bladeHeight * (1f + shapeVariance);
@@ -478,7 +473,7 @@ public class GrassManager : MonoBehaviour
 
     private void PrepareIndirectArgs()
     {
-        // Copy each append buffer's internal counter directly into its args buffer's instance count
+        // Copies each append buffer's live counter into its args buffer's instance count.
         GraphicsBuffer.CopyCount(grassDataBuffer, argsBuffer, 4);
         GraphicsBuffer.CopyCount(grassDataBufferLow, argsBufferLow, 4);
     }

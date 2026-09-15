@@ -1,10 +1,9 @@
 #ifndef GRASS_TERRAIN_SAMPLING_INCLUDED
 #define GRASS_TERRAIN_SAMPLING_INCLUDED
 
-// Shared by GrassBuilder.compute (blade placement/culling) and GrassVertex.hlsl
-// (blade orientation): reads Unity's own Terrain.terrainData.heightmapTexture.
-// Set as globals from GrassManager.cs so both the compute shader and the
-// render material see the same terrain data without duplicating it per-blade.
+// Shared by GrassBuilder.compute (blade placement/culling) and GrassVertex.hlsl (blade
+// orientation): reads Unity's Terrain.terrainData.heightmapTexture. Set as globals from
+// GrassManager.cs so both shaders see the same terrain data without duplicating it per blade.
 Texture2D<float4> _HeightmapTexture;
 float2 _TerrainOriginXZ;
 float2 _TerrainSize;

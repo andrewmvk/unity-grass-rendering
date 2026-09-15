@@ -12,19 +12,16 @@ float _TileSize;
 uint _GrassPerAxis;
 float _GrassLODSwitchDist;
 
-// Fine (per-blade) culling: the CPU pass already discards whole tiles outside
-// the frustum, but a partially-overlapping tile still has individual blades
-// beyond the frustum edge; this catches those.
+// Fine per-blade culling: the CPU pass already discards whole tiles outside the
+// frustum, but a partially-overlapping tile can still have blades beyond its edge.
 float4 _FrustumPlanes[6];
 
-// Worst-case distance from a blade's root to any of its vertices (tip, side-
-// curve/bend bulge, base width), computed on the CPU from the current shape
-// params. Testing the root as a sphere of this radius avoids culling a blade 
-// whose root is just outside the frustum but whose tip still leans into view.
+// Worst-case distance from a blade's root to any of its vertices, computed on the CPU
+// from the current shape params (see GrassManager.ComputeBladeBoundingRadius). Treating
+// the root as a sphere of this radius avoids culling a blade whose tip still leans into view.
 float _BladeBoundingRadius;
 
-// Ground-validity mask: the terrain's own layer-0 alphamap (how much of the
-// painted "grass" layer covers each texel). >0.5 = grass allowed to grow here.
+// Ground-validity mask: the terrain's painted layer-0 alphamap. >0.5 means grass is allowed to grow there.
 Texture2D<float4> _ControlTexture;
 
 // Blades already faded to nothing are skipped
@@ -72,7 +69,7 @@ float _ShapeVariance;    // fraction of base height/width/bend/tilt, e.g. 0.3 = 
 float _SideCurveStrength; // max magnitude of the random sideways curve
 float _JitterStrength;    // fraction of the grid step used as position jitter, 0-1
 
-// How strongly a blade's facing gets pulled toward downhill as slope steepens,
+// How strongly a blade's facing is pulled toward downhill as slope steepens:
 // 0 = always random, 1 = fully downhill on any non-flat ground.
 float _SlopeLeanStrength;
 
@@ -83,21 +80,19 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
     // groupID.z indexes into the current visible-tiles list, which is rebuilt every frame as the camera moves.
     TileData tile = _VisibleTiles[groupID.z];
 
-    // Ensure it don't process out-of-bounds threads if _GrassPerAxis isn't a multiple of 8
+    // Skip threads outside _GrassPerAxis, in case it isn't a multiple of 8.
     if (id.x >= _GrassPerAxis || id.y >= _GrassPerAxis)
         return;
 
-    // Calculate local position inside the tile
     float step = _TileSize / (float)_GrassPerAxis;
     float halfSize = _TileSize * 0.5f;
 
-    // Combine the tile's stable grid id with the grid cell into one per-blade hash.
-    // Every random draw below is seeded from this single value, so it stays
-    // identical for a given blade across frames/dispatches.
+    // Combines the tile's stable id with the grid cell into one per-blade hash. Every
+    // random draw below is seeded from this value, so it stays stable across frames.
     uint rawIndex = tile.tileId * 92821u + id.x * 15761u + id.y * 60013u;
     uint bladeHash = HashUInt(rawIndex);
 
-    // Jitter the grid position within its cell so blades don't sit on a perfect grid.
+    // Jitters the grid position within its cell so blades don't sit on a perfect grid.
     float jitterX = HashToSigned(bladeHash, 0) * step * 0.5 * _JitterStrength;
     float jitterZ = HashToSigned(bladeHash, 1) * step * 0.5 * _JitterStrength;
 
@@ -106,13 +101,12 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
 
     worldPos.y = SampleTerrainHeight(worldPos.xz);
 
-    // Fine culling: discard this thread (no Append, no further work) if the
-    // blade's whole bounding sphere falls outside the frustum, or its root is
-    // off valid ground.
+    // Fine culling: skip this thread entirely if the blade's bounding sphere falls
+    // outside the frustum, or its root sits off valid ground.
     if (!IsInsideFrustum(worldPos, _BladeBoundingRadius) || !IsValidGround(worldPos))
         return;
 
-    // Distance fade has already shrunk this blade to nothing - skip it entirely
+    // Skip blades already faded to nothing by distance.
     if (GetGrassFadeShrink(worldPos, _GrassCameraPosition, _GrassFadeStartDist, _GrassFadeEndDist) <= 0.0)
         return;
 
@@ -121,24 +115,21 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
     if (HashToFloat01(bladeHash, 10) >= densityKeepFraction)
         return;
 
-    // Random facing direction (normalized 2D vector in the world XZ plane)
+    // Random facing direction, as a unit vector in the world XZ plane.
     float facingAngle = HashToFloat01(bladeHash, 2) * 6.28318530718; // 2*PI
     float2 randomFacing = float2(cos(facingAngle), sin(facingAngle));
 
-    // Ground normal, sampled once per blade (not per vertex - see GrassVertex.hlsl).
-    // Its horizontal component already points downhill (ComputeTerrainNormal derives
-    // it as the negative height gradient), so it doubles as the downhill direction.
+    // Ground normal, sampled once per blade (not per vertex, see GrassVertex.hlsl). Its
+    // horizontal part already points downhill, so it doubles as the downhill direction.
     float3 groundNormal = ComputeTerrainNormal(worldPos.xz);
     float2 downhill = groundNormal.xz;
     float slope = saturate(length(downhill)); // ~0 flat, approaches 1 as slope steepens
 
-    // Rotate downhill by -90 degrees so ApplyBladeOrientation's "forward" axis
-    // (which sits 90 degrees CCW from facing) ends up pointing downhill, letting
-    // the blade's existing tilt/bend lean that way on slopes.
+    // Rotates downhill by -90 degrees so ApplyBladeOrientation's forward axis (90 degrees
+    // CCW from facing) points downhill, letting the blade's tilt/bend lean that way on slopes.
     float2 downhillLeanFacing = slope > 1e-5 ? float2(downhill.y, -downhill.x) / slope : randomFacing;
     float2 facing = normalize(lerp(randomFacing, downhillLeanFacing, slope * _SlopeLeanStrength));
 
-    // Per-blade shape variation around the base params
     float height = max(0.01, _BaseHeight * (1.0 + HashToSigned(bladeHash, 3) * _ShapeVariance));
     float width = max(0.001, _BaseWidth * (1.0 + HashToSigned(bladeHash, 4) * _ShapeVariance));
     float tilt = _BaseTilt * (1.0 + HashToSigned(bladeHash, 5) * _ShapeVariance);
@@ -151,7 +142,6 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
     float2 clumpFacing = float2(cos(clumpFacingAngle), sin(clumpFacingAngle));
     float windStrength = HashToFloat01(bladeHash, 9);
 
-    // Output surviving grass to the Append Buffer
     GrassData grass;
     grass.position = worldPos;
     grass.facing = facing;

@@ -11,12 +11,11 @@ StructuredBuffer<GrassData> _GrassDataBuffer;
 float _GrassFadeStartDist;
 float _GrassFadeEndDist;
 
-// Explicitly the GrassManager's Main Camera reference (also used for frustum
-// culling/tile streaming), NOT necessarily whichever camera HDRP is currently
-// rendering with - deliberate, so the Scene view camera can be moved around
-// to debug culling/streaming without perturbing the fade. Swap this for HDRP's
-// actual rendering camera (e.g. via GetCameraRelativePositionWS) if this ever
-// needs to be correct for a real multi-camera/XR production setup.
+// Explicitly the GrassManager's Main Camera reference (also used for frustum culling and
+// tile streaming), not necessarily whichever camera HDRP is currently rendering with. This
+// is deliberate: it lets the Scene view camera move freely to debug culling/streaming
+// without perturbing the fade. Swap this for HDRP's actual rendering camera (e.g. via
+// GetCameraRelativePositionWS) if this ever needs to be correct for multi-camera/XR.
 float3 _GrassCameraPosition;
 
 float _GrassLODSwitchDist;

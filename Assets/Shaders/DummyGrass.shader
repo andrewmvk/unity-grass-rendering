@@ -4,7 +4,7 @@ Shader "Custom/DummyGrass"
     {
         Tags { "RenderPipeline"="HDRenderPipeline" "RenderType"="Opaque" "Queue"="Geometry" }
 
-        // DEPTH PREPASS - Forces grass depth to render before the terrain, fixing visibility from above
+        // Depth pre-pass: forces grass depth to render before the terrain, fixing visibility from above.
         Pass
         {
             Name "DepthForwardOnly"
@@ -38,9 +38,9 @@ Shader "Custom/DummyGrass"
                 return o;
             }
 
-            // SV_Target0 here IS HDRP's normal buffer for Forward-rendered opaque geometry (used by
-            // SSAO/SSR/contact shadows and AOV normal export), not a color output - assumes MSAA off
-            // (this project's HDRP asset has it disabled; with MSAA on HDRP shifts this to SV_Target1).
+            // SV_Target0 is HDRP's normal buffer for forward-rendered opaque geometry (used by
+            // SSAO/SSR/contact shadows and AOV normal export), not a color output. Assumes MSAA
+            // is off, as in this project's HDRP asset (HDRP writes to SV_Target1 instead with MSAA on).
             float4 frag (v2f i, bool isFrontFace : SV_IsFrontFace) : SV_Target
             {
                 NormalData normalData;
@@ -54,7 +54,7 @@ Shader "Custom/DummyGrass"
             ENDHLSL
         }
 
-        // FORWARD PASS - Renders the actual color
+        // Forward pass: renders the actual color.
         Pass
         {
             Name "ForwardOnly"
