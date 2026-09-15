@@ -8,7 +8,7 @@ public class GrassManager : MonoBehaviour
     // Worst-case bounds (Sucker Punch's approach). Buffers are sized for these once at
     // Start, so the sliders below can be tuned live without ever reallocating.
     private const int MaxGrassPerAxisPerTile = 64;
-    private const int MaxRenderDistanceInTiles = 64;
+    private const int MaxRenderDistanceInTiles = 16;
 
     // Tile size in world units. Not a live-tunable field: changing it while playing
     // would invalidate every already-streamed tile's position and AABB.
