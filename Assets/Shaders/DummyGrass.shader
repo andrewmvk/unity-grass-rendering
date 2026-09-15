@@ -69,6 +69,7 @@ Shader "Custom/DummyGrass"
             #pragma fragment frag
             #pragma target 4.5
             #pragma multi_compile_local _ _GRASS_LOD_LOW
+            #pragma multi_compile_local _ _GRASS_DEBUG_CLUMP
 
             #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
             #include "Packages/com.unity.render-pipelines.high-definition/Runtime/ShaderLibrary/ShaderVariables.hlsl"
@@ -87,6 +88,7 @@ Shader "Custom/DummyGrass"
             float _GrassSSSStrength;
             float _GrassRootAOStrength;
             float _GrassRootAOHeight;
+            float _ClumpColorStrength;
 
             struct v2f
             {
@@ -95,6 +97,7 @@ Shader "Custom/DummyGrass"
                 float3 normalWS : TEXCOORD1;
                 float heightPercent : TEXCOORD2;
                 nointerpolation uint bladeHash : TEXCOORD3;
+                nointerpolation float3 clumpColor : TEXCOORD4;
             };
 
             v2f vert (uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
@@ -108,11 +111,16 @@ Shader "Custom/DummyGrass"
                 o.normalWS = g.normalWS;
                 o.heightPercent = g.heightPercent;
                 o.bladeHash = g.bladeHash;
+                o.clumpColor = g.clumpColor;
                 return o;
             }
 
             float4 frag (v2f i, bool isFrontFace : SV_IsFrontFace) : SV_Target
             {
+#if defined(_GRASS_DEBUG_CLUMP)
+                return float4(i.clumpColor, 1.0);
+#endif
+
                 float3 normal = normalize(i.normalWS) * (isFrontFace ? 1.0 : -1.0);
                 float3 lightDir = normalize(_GrassLightDir);
 
@@ -120,6 +128,7 @@ Shader "Custom/DummyGrass"
                 float3 tipColor = lerp(_GrassTipColorLow.rgb, _GrassTipColorHigh.rgb, HashToFloat01(i.bladeHash, 41));
                 float3 albedo = lerp(baseColor, tipColor, pow(saturate(i.heightPercent), 1.5));
                 albedo *= 1.0 + HashToSigned(i.bladeHash, 42) * _GrassShadeJitterStrength;
+                albedo = lerp(albedo, albedo * i.clumpColor, _ClumpColorStrength);
 
                 float wrap = 0.5;
                 float diffuseTerm = saturate((dot(normal, lightDir) + wrap) / (1.0 + wrap));

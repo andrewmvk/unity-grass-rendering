@@ -1,6 +1,7 @@
 #pragma kernel BuildGrass
 
 #include "GrassHash.hlsl"
+#include "GrassClump.hlsl"
 #include "Assets/Shaders/GrassStructs.hlsl"
 #include "Assets/Shaders/GrassTerrainSampling.hlsl"
 
@@ -73,6 +74,15 @@ float _JitterStrength;    // fraction of the grid step used as position jitter, 
 // 0 = always random, 1 = fully downhill on any non-flat ground.
 float _SlopeLeanStrength;
 
+// Voronoi clump grid: independent of the tile grid and keyed purely on world position,
+// so clump membership is seamless across tile-streaming boundaries.
+float _ClumpSize;
+float _ClumpJitterStrength;
+float _ClumpFacingStrength;
+float4 _ClumpColorA;
+float4 _ClumpColorB;
+float _ClumpHeightFalloff;
+
 // 8x8 threads per group (64 blades evaluated per group)
 [numthreads(8, 8, 1)]
 void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
@@ -130,16 +140,27 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
     float2 downhillLeanFacing = slope > 1e-5 ? float2(downhill.y, -downhill.x) / slope : randomFacing;
     float2 facing = normalize(lerp(randomFacing, downhillLeanFacing, slope * _SlopeLeanStrength));
 
-    float height = max(0.01, _BaseHeight * (1.0 + HashToSigned(bladeHash, 3) * _ShapeVariance));
     float width = max(0.001, _BaseWidth * (1.0 + HashToSigned(bladeHash, 4) * _ShapeVariance));
     float tilt = _BaseTilt * (1.0 + HashToSigned(bladeHash, 5) * _ShapeVariance);
     float bend = _BaseBend * (1.0 + HashToSigned(bladeHash, 6) * _ShapeVariance);
     float sideCurve = HashToSigned(bladeHash, 7) * _SideCurveStrength;
 
-    // Placeholder until the Voronoi clump system assigns a real per-clump
-    // facing, and the wind system drives per-blade wind response.
-    float clumpFacingAngle = HashToFloat01(bladeHash, 8) * 6.28318530718;
+    // Every blade whose nearest Voronoi seed is the same clump cell shares this facing/color,
+    // so patches visually "comb" toward a common direction and read as distinct clumps.
+    float clumpDistToCenter;
+    uint clumpId = GetClumpId(worldPos.xz, _ClumpSize, _ClumpJitterStrength, clumpDistToCenter);
+    float clumpFacingAngle = HashToFloat01(clumpId, 50) * 6.28318530718;
     float2 clumpFacing = float2(cos(clumpFacingAngle), sin(clumpFacingAngle));
+    facing = normalize(lerp(facing, clumpFacing, _ClumpFacingStrength));
+    float3 clumpColor = lerp(_ClumpColorA.rgb, _ClumpColorB.rgb, HashToFloat01(clumpId, 51));
+
+    // Blades taper shorter the further they sit from their clump's own center, so each
+    // patch reads as a mound rather than a uniform-height block.
+    float clumpEdgeFraction = saturate(clumpDistToCenter / (_ClumpSize * 0.5));
+    float clumpHeightScale = lerp(1.0, 1.0 - _ClumpHeightFalloff, clumpEdgeFraction);
+
+    float height = max(0.01, _BaseHeight * (1.0 + HashToSigned(bladeHash, 3) * _ShapeVariance) * clumpHeightScale);
+
     float windStrength = HashToFloat01(bladeHash, 9);
 
     GrassData grass;
@@ -151,6 +172,7 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
     grass.bend = bend;
     grass.sideCurve = sideCurve;
     grass.clumpFacing = clumpFacing;
+    grass.clumpColor = clumpColor;
     grass.windStrength = windStrength;
     grass.bladeHash = bladeHash;
 

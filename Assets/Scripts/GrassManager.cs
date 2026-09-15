@@ -40,6 +40,22 @@ public class GrassManager : MonoBehaviour
     [SerializeField] [Range(0f, 1f)] [Tooltip("How strongly a blade's facing is pulled downhill as slope steepens (baked in once per blade at build time). 0 = always random facing, 1 = fully downhill on any slope. Blades themselves still grow straight up regardless of this value - see GrassBladeSpine.hlsl.")]
     private float slopeLeanStrength = 0.6f;
 
+    [Header("Clumping")]
+    [SerializeField] [Tooltip("World-space size of a Voronoi clump cell. Smaller = more, tighter patches.")]
+    private float clumpSize = 3f;
+    [SerializeField] [Range(0f, 1f)] [Tooltip("How far each clump's seed point can drift from its cell center, as a fraction of clump size. Keep <= 1 so the 3x3 neighbor search stays correct.")]
+    private float clumpJitterStrength = 1f;
+    [SerializeField] [Range(0f, 1f)] [Tooltip("How strongly a blade's facing is pulled toward its clump's shared facing direction. 0 = ignore clumping, 1 = fully comb toward the clump direction.")]
+    private float clumpFacingStrength = 0.45f;
+    [SerializeField] private Color clumpColorA = new Color(85f, 192f, 66f);
+    [SerializeField] private Color clumpColorB = new Color(255f, 209f, 45f);
+    [SerializeField] [Range(0f, 1f)] [Tooltip("How strongly the per-clump color tint is applied over the base hash-based tint.")]
+    private float clumpColorStrength = 0.5f;
+    [SerializeField] [Range(0f, 1f)] [Tooltip("How much shorter blades get the further they sit from their clump's center. 0 = uniform height, 1 = blades taper to minimum height at the clump cell edge.")]
+    private float clumpHeightFalloff = 0.5f;
+    [SerializeField] [Tooltip("Debug: renders each blade's raw clump color unlit, bypassing lighting, to visualize Voronoi cell boundaries.")]
+    private bool debugClumpView = false;
+
     [Header("Blade Shape - base values")]
     [SerializeField] private float bladeHeight = 1f;
     [SerializeField] private float bladeWidth = 0.06f;
@@ -81,7 +97,7 @@ public class GrassManager : MonoBehaviour
     private static readonly int tileDataStride = Marshal.SizeOf<TileData>();
 
     // GrassData is populated entirely on the GPU; only its byte stride is needed here to size the buffer.
-    private const int grassDataStride = 56;
+    private const int grassDataStride = 68;
 
     private struct TileEntry { public TileData data; public Bounds bounds; }
 
@@ -115,6 +131,7 @@ public class GrassManager : MonoBehaviour
     private const uint bladeIndexCountLow = 3;
 
     private const string LODLowKeyword = "_GRASS_LOD_LOW";
+    private const string ClumpDebugKeyword = "_GRASS_DEBUG_CLUMP";
     private Material grassMaterialLow;
 
     private bool initialized;
@@ -145,6 +162,7 @@ public class GrassManager : MonoBehaviour
         grassMaterial.DisableKeyword(LODLowKeyword);
         grassMaterialLow = new Material(grassMaterial);
         grassMaterialLow.EnableKeyword(LODLowKeyword);
+        ApplyDebugClumpKeyword();
 
         frustumPlaneVectors = new Vector4[6];
 
@@ -388,6 +406,28 @@ public class GrassManager : MonoBehaviour
         Shader.SetGlobalFloat("_GrassSSSStrength", subsurfaceStrength);
         Shader.SetGlobalFloat("_GrassRootAOStrength", rootAOStrength);
         Shader.SetGlobalFloat("_GrassRootAOHeight", rootAOHeight);
+        Shader.SetGlobalFloat("_ClumpColorStrength", clumpColorStrength);
+    }
+
+    private void ApplyDebugClumpKeyword()
+    {
+        if (grassMaterial == null || grassMaterialLow == null) return;
+
+        if (debugClumpView)
+        {
+            grassMaterial.EnableKeyword(ClumpDebugKeyword);
+            grassMaterialLow.EnableKeyword(ClumpDebugKeyword);
+        }
+        else
+        {
+            grassMaterial.DisableKeyword(ClumpDebugKeyword);
+            grassMaterialLow.DisableKeyword(ClumpDebugKeyword);
+        }
+    }
+
+    private void OnValidate()
+    {
+        ApplyDebugClumpKeyword();
     }
 
     private void PerformCPUCulling()
@@ -427,6 +467,12 @@ public class GrassManager : MonoBehaviour
         grassBuilderCS.SetFloat("_SideCurveStrength", sideCurveStrength);
         grassBuilderCS.SetFloat("_JitterStrength", jitterStrength);
         grassBuilderCS.SetFloat("_SlopeLeanStrength", slopeLeanStrength);
+        grassBuilderCS.SetFloat("_ClumpSize", clumpSize);
+        grassBuilderCS.SetFloat("_ClumpJitterStrength", clumpJitterStrength);
+        grassBuilderCS.SetFloat("_ClumpFacingStrength", clumpFacingStrength);
+        grassBuilderCS.SetVector("_ClumpColorA", clumpColorA);
+        grassBuilderCS.SetVector("_ClumpColorB", clumpColorB);
+        grassBuilderCS.SetFloat("_ClumpHeightFalloff", clumpHeightFalloff);
 
         for (int i = 0; i < 6; i++)
         {

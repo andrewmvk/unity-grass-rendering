@@ -49,6 +49,7 @@ struct GrassVertexData
     float3 positionWS;
     float3 normalWS;
     float heightPercent;
+    float3 clumpColor;
     uint bladeHash;
 };
 
@@ -65,6 +66,7 @@ GrassVertexData GetGrassVertexData(uint vertexID, uint instanceID)
     o.positionWS = grass.position + ApplyBladeOrientation(localPos, grass.facing);
     o.normalWS = normalize(ApplyBladeOrientation(localNormal, grass.facing));
     o.heightPercent = GetBladeHeightPercent(vertexID);
+    o.clumpColor = grass.clumpColor;
     o.bladeHash = grass.bladeHash;
     return o;
 }

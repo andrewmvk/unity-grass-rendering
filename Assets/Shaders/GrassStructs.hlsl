@@ -21,6 +21,7 @@ struct GrassData
     float bend;
     float sideCurve;
     float2 clumpFacing;
+    float3 clumpColor;
     float windStrength;
     uint bladeHash;
 };
