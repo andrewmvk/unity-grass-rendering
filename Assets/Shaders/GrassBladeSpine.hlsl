@@ -40,10 +40,11 @@ void GetBezierControlPoints(BladeParams p, out float3 root, out float3 p1, out f
     float3 toTip = tip - root;
     float toTipLen = length(toTip);
     float3 dir = toTipLen > 1e-6 ? toTip / toTipLen : float3(0, 1, 0);
-    float3 up = float3(0, 1, 0);
-    float3 perp = up - dot(up, dir) * dir;
-    float perpLen = length(perp);
-    perp = perpLen > 1e-5 ? perp / perpLen : float3(0, 0, 1);
+
+    // dir always lies in the YZ plane (tip.x is always 0), so its perpendicular within
+    // that same plane is just a 90-degree rotation of dir - always unit length, with no
+    // singularity.
+    float3 perp = float3(0, dir.z, -dir.y);
 
     float3 mid = lerp(root, tip, 0.5) + perp * p.bend;
     p1 = root + (mid - root) * (2.0 / 3.0);

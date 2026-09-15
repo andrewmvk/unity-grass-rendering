@@ -70,6 +70,7 @@ Shader "Custom/DummyGrass"
             #pragma target 4.5
             #pragma multi_compile_local _ _GRASS_LOD_LOW
             #pragma multi_compile_local _ _GRASS_DEBUG_CLUMP
+            #pragma multi_compile_local _ _GRASS_DEBUG_WIND
 
             #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
             #include "Packages/com.unity.render-pipelines.high-definition/Runtime/ShaderLibrary/ShaderVariables.hlsl"
@@ -98,6 +99,7 @@ Shader "Custom/DummyGrass"
                 float heightPercent : TEXCOORD2;
                 nointerpolation uint bladeHash : TEXCOORD3;
                 nointerpolation float3 clumpColor : TEXCOORD4;
+                nointerpolation float windNoise : TEXCOORD5;
             };
 
             v2f vert (uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
@@ -112,14 +114,31 @@ Shader "Custom/DummyGrass"
                 o.heightPercent = g.heightPercent;
                 o.bladeHash = g.bladeHash;
                 o.clumpColor = g.clumpColor;
+                o.windNoise = g.windNoise;
                 return o;
+            }
+
+            // Blue (calm) -> green -> yellow -> red (strong gust), for the wind debug view.
+            float3 WindHeatMap(float t)
+            {
+                float3 calm = float3(0.0, 0.0, 1.0);
+                float3 mild = float3(0.0, 1.0, 0.0);
+                float3 strong = float3(1.0, 1.0, 0.0);
+                float3 gust = float3(1.0, 0.0, 0.0);
+
+                float3 low = lerp(calm, mild, saturate(t / 0.33));
+                float3 high = lerp(mild, lerp(strong, gust, saturate((t - 0.66) / 0.34)), saturate((t - 0.33) / 0.33));
+                return t < 0.33 ? low : high;
             }
 
             float4 frag (v2f i, bool isFrontFace : SV_IsFrontFace) : SV_Target
             {
-#if defined(_GRASS_DEBUG_CLUMP)
-                return float4(i.clumpColor, 1.0);
-#endif
+                #if defined(_GRASS_DEBUG_CLUMP)
+                    return float4(i.clumpColor, 1.0);
+                #endif
+                #if defined(_GRASS_DEBUG_WIND)
+                    return float4(WindHeatMap(i.windNoise), 1.0);
+                #endif
 
                 float3 normal = normalize(i.normalWS) * (isFrontFace ? 1.0 : -1.0);
                 float3 lightDir = normalize(_GrassLightDir);
@@ -133,40 +152,40 @@ Shader "Custom/DummyGrass"
                 float wrap = 0.5;
                 float diffuseTerm = saturate((dot(normal, lightDir) + wrap) / (1.0 + wrap));
 
-#if defined(_GRASS_LOD_LOW)
-                float3 viewDir = normalize(-i.positionWS);
-                float3 diffuse = diffuseTerm * _GrassLightColor.rgb * albedo;
+                #if defined(_GRASS_LOD_LOW)
+                    float3 viewDir = normalize(-i.positionWS);
+                    float3 diffuse = diffuseTerm * _GrassLightColor.rgb * albedo;
 
-                // Fake subsurface scattering: light glows through the blade when backlit.
-                float backLight = saturate((dot(viewDir, -lightDir) + wrap) / (1.0 + wrap));
-                float3 subsurface = pow(backLight, 2.0) * _GrassSSSStrength * _GrassLightColor.rgb * albedo * (0.4 + 0.6 * i.heightPercent);
+                    // Fake subsurface scattering: light glows through the blade when backlit.
+                    float backLight = saturate((dot(viewDir, -lightDir) + wrap) / (1.0 + wrap));
+                    float3 subsurface = pow(backLight, 2.0) * _GrassSSSStrength * _GrassLightColor.rgb * albedo * (0.4 + 0.6 * i.heightPercent);
 
-                float3 ambient = _GrassAmbientColor.rgb * albedo;
-                float3 color = ambient + diffuse + subsurface;
-                return float4(color, 1.0);
-#else
-                float3 viewDir = normalize(-i.positionWS);
+                    float3 ambient = _GrassAmbientColor.rgb * albedo;
+                    float3 color = ambient + diffuse + subsurface;
+                    return float4(color, 1.0);
+                #else
+                    float3 viewDir = normalize(-i.positionWS);
 
-                // Fake AO: dense grass self-shadows near the root, fading out fast with height.
-                float rootAO = lerp(1.0 - _GrassRootAOStrength, 1.0, saturate(i.heightPercent / max(_GrassRootAOHeight, 1e-4)));
-                float occlusion = rootAO * rootAO;
-                albedo *= occlusion;
+                    // Fake AO: dense grass self-shadows near the root, fading out fast with height.
+                    float rootAO = lerp(1.0 - _GrassRootAOStrength, 1.0, saturate(i.heightPercent / max(_GrassRootAOHeight, 1e-4)));
+                    float occlusion = rootAO * rootAO;
+                    albedo *= occlusion;
 
-                float3 diffuse = diffuseTerm * _GrassLightColor.rgb * albedo;
+                    float3 diffuse = diffuseTerm * _GrassLightColor.rgb * albedo;
 
-                float3 halfDir = normalize(lightDir + viewDir);
-                float specNormalization = (_GrassSpecPower * 0.5 + 1.0) / PI;
-                float specTerm = specNormalization * pow(saturate(dot(normal, halfDir)), _GrassSpecPower);
-                float3 specular = specTerm * _GrassSpecStrength * _GrassLightColor.rgb * occlusion;
+                    float3 halfDir = normalize(lightDir + viewDir);
+                    float specNormalization = (_GrassSpecPower * 0.5 + 1.0) / PI;
+                    float specTerm = specNormalization * pow(saturate(dot(normal, halfDir)), _GrassSpecPower);
+                    float3 specular = specTerm * _GrassSpecStrength * _GrassLightColor.rgb * occlusion;
 
-                // Fake subsurface scattering: light glows through the blade when backlit.
-                float backLight = saturate((dot(viewDir, -lightDir) + wrap) / (1.0 + wrap));
-                float3 subsurface = pow(backLight, 2.0) * _GrassSSSStrength * _GrassLightColor.rgb * albedo * (0.4 + 0.6 * i.heightPercent);
+                    // Fake subsurface scattering: light glows through the blade when backlit.
+                    float backLight = saturate((dot(viewDir, -lightDir) + wrap) / (1.0 + wrap));
+                    float3 subsurface = pow(backLight, 2.0) * _GrassSSSStrength * _GrassLightColor.rgb * albedo * (0.4 + 0.6 * i.heightPercent);
 
-                float3 ambient = _GrassAmbientColor.rgb * albedo;
-                float3 color = ambient + diffuse + specular + subsurface;
-                return float4(color, 1.0);
-#endif
+                    float3 ambient = _GrassAmbientColor.rgb * albedo;
+                    float3 color = ambient + diffuse + specular + subsurface;
+                    return float4(color, 1.0);
+                #endif
             }
             ENDHLSL
         }

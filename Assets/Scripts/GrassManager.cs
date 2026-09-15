@@ -56,6 +56,22 @@ public class GrassManager : MonoBehaviour
     [SerializeField] [Tooltip("Debug: renders each blade's raw clump color unlit, bypassing lighting, to visualize Voronoi cell boundaries.")]
     private bool debugClumpView = false;
 
+    [Header("Wind")]
+    [SerializeField] [Range(0f, 360f)] [Tooltip("Compass direction the wind blows toward, in the world XZ plane (0 = +X, 90 = +Z).")]
+    private float windDirectionDegrees = 45f;
+    [SerializeField] [Range(0f, 24f)] [Tooltip("World-space drift speed of the wind noise pattern, in units per second, along the wind direction.")]
+    private float windSpeed = 4f;
+    [SerializeField] [Range(1f, 100f)] [Tooltip("World-space size of a single wind gust patch. Larger = broader, slower-feeling gusts.")]
+    private float windGustSize = 12f;
+    [SerializeField] [Tooltip("Max world-space horizontal offset a fully-gusted blade's tip is pushed by wind.")]
+    private float windBendAmount = 0.35f;
+    [SerializeField] [Range(0f, 4f)] [Tooltip("Overall wind strength multiplier, combined with each blade's own baked windStrength.")]
+    private float windStrengthMultiplier = 1f;
+    [SerializeField] [Range(32, 512)] [Tooltip("Resolution of the procedurally generated wind noise texture.")]
+    private int windNoiseResolution = 256;
+    [SerializeField] [Tooltip("Debug: renders the wind noise texture as a heat map (blue = calm, red = strong gust), bypassing lighting.")]
+    private bool debugWindView = false;
+
     [Header("Blade Shape - base values")]
     [SerializeField] private float bladeHeight = 1f;
     [SerializeField] private float bladeWidth = 0.06f;
@@ -132,7 +148,10 @@ public class GrassManager : MonoBehaviour
 
     private const string LODLowKeyword = "_GRASS_LOD_LOW";
     private const string ClumpDebugKeyword = "_GRASS_DEBUG_CLUMP";
+    private const string WindDebugKeyword = "_GRASS_DEBUG_WIND";
     private Material grassMaterialLow;
+
+    private Texture2D windNoiseTexture;
 
     private bool initialized;
 
@@ -162,7 +181,9 @@ public class GrassManager : MonoBehaviour
         grassMaterial.DisableKeyword(LODLowKeyword);
         grassMaterialLow = new Material(grassMaterial);
         grassMaterialLow.EnableKeyword(LODLowKeyword);
-        ApplyDebugClumpKeyword();
+        ApplyDebugKeywords();
+
+        windNoiseTexture = GenerateWindNoiseTexture();
 
         frustumPlaneVectors = new Vector4[6];
 
@@ -204,6 +225,66 @@ public class GrassManager : MonoBehaviour
 
         bladeIndexBufferLow = new GraphicsBuffer(GraphicsBuffer.Target.Index, (int)bladeIndexCountLow, sizeof(ushort));
         bladeIndexBufferLow.SetData(new ushort[] { 0, 1, 2 });
+    }
+
+    // Procedural wind noise, generated once at startup and scrolled via a shader global
+    // offset rather than regenerated, so it costs nothing per frame.
+    private Texture2D GenerateWindNoiseTexture()
+    {
+        Texture2D tex = new Texture2D(windNoiseResolution, windNoiseResolution, TextureFormat.R8, false, true)
+        {
+            wrapMode = TextureWrapMode.Repeat,
+            filterMode = FilterMode.Bilinear
+        };
+
+        int pixelCount = windNoiseResolution * windNoiseResolution;
+        float[] rawValues = new float[pixelCount];
+        float minValue = float.MaxValue;
+        float maxValue = float.MinValue;
+
+        for (int y = 0; y < windNoiseResolution; y++)
+        {
+            for (int x = 0; x < windNoiseResolution; x++)
+            {
+                float value = SeamlessPerlin(x, y, windNoiseResolution, 4f)
+                            + 0.5f * SeamlessPerlin(x, y, windNoiseResolution, 8f);
+                rawValues[y * windNoiseResolution + x] = value;
+                minValue = Mathf.Min(minValue, value);
+                maxValue = Mathf.Max(maxValue, value);
+            }
+        }
+
+        // Averaging two Perlin octaves clusters values near the middle of their range, so
+        // stretch the actual min/max out to [0, 1] - otherwise gusts (and the debug heat
+        // map) never reach their calm/strong extremes.
+        float range = Mathf.Max(maxValue - minValue, 1e-5f);
+        Color[] pixels = new Color[pixelCount];
+        for (int i = 0; i < pixelCount; i++)
+        {
+            float value = (rawValues[i] - minValue) / range;
+            pixels[i] = new Color(value, value, value, 1f);
+        }
+
+        tex.SetPixels(pixels);
+        tex.Apply(false, true);
+        return tex;
+    }
+
+    // Blends the four toroidal-wraparound corners of Mathf.PerlinNoise so opposite edges
+    // match, making the tile safe to scroll seamlessly under TextureWrapMode.Repeat.
+    private static float SeamlessPerlin(float x, float y, float period, float frequency)
+    {
+        float s = x / period;
+        float t = y / period;
+
+        float nx = s * frequency;
+        float ny = t * frequency;
+        float nxw = (s - 1f) * frequency;
+        float nyh = (t - 1f) * frequency;
+
+        float top = Mathf.Lerp(Mathf.PerlinNoise(nx, ny), Mathf.PerlinNoise(nxw, ny), s);
+        float bottom = Mathf.Lerp(Mathf.PerlinNoise(nx, nyh), Mathf.PerlinNoise(nxw, nyh), s);
+        return Mathf.Lerp(top, bottom, t);
     }
 
     // Indirect Draw Indexed Arguments buffer (5 uints):
@@ -365,6 +446,7 @@ public class GrassManager : MonoBehaviour
                 DispatchGrassBuilder();
                 PrepareIndirectArgs();
                 UpdateLightingGlobals();
+                UpdateWindGlobals();
             }
         }
 
@@ -409,25 +491,42 @@ public class GrassManager : MonoBehaviour
         Shader.SetGlobalFloat("_ClumpColorStrength", clumpColorStrength);
     }
 
-    private void ApplyDebugClumpKeyword()
+    private void UpdateWindGlobals()
+    {
+        float rad = windDirectionDegrees * Mathf.Deg2Rad;
+        Vector2 windDirection = new Vector2(Mathf.Cos(rad), Mathf.Sin(rad));
+
+        // World-space offset, not noise-UV space, so windSpeed (world units/sec) stays
+        // independent of windGustSize (see the windUV calc in GrassVertex.hlsl).
+        Vector2 scrollOffset = Time.time * windSpeed * windDirection;
+
+        Shader.SetGlobalTexture("_WindNoiseTexture", windNoiseTexture);
+        Shader.SetGlobalVector("_WindDirection", windDirection);
+        Shader.SetGlobalVector("_WindScrollOffset", scrollOffset);
+        Shader.SetGlobalFloat("_WindNoiseScale", 1f / Mathf.Max(windGustSize, 0.01f));
+        Shader.SetGlobalFloat("_WindBendAmount", windBendAmount);
+        Shader.SetGlobalFloat("_WindStrengthMultiplier", windStrengthMultiplier);
+    }
+
+    private void ApplyDebugKeywords()
     {
         if (grassMaterial == null || grassMaterialLow == null) return;
 
-        if (debugClumpView)
-        {
-            grassMaterial.EnableKeyword(ClumpDebugKeyword);
-            grassMaterialLow.EnableKeyword(ClumpDebugKeyword);
-        }
-        else
-        {
-            grassMaterial.DisableKeyword(ClumpDebugKeyword);
-            grassMaterialLow.DisableKeyword(ClumpDebugKeyword);
-        }
+        SetKeyword(grassMaterial, ClumpDebugKeyword, debugClumpView);
+        SetKeyword(grassMaterialLow, ClumpDebugKeyword, debugClumpView);
+        SetKeyword(grassMaterial, WindDebugKeyword, debugWindView);
+        SetKeyword(grassMaterialLow, WindDebugKeyword, debugWindView);
+    }
+
+    private static void SetKeyword(Material material, string keyword, bool enabled)
+    {
+        if (enabled) material.EnableKeyword(keyword);
+        else material.DisableKeyword(keyword);
     }
 
     private void OnValidate()
     {
-        ApplyDebugClumpKeyword();
+        ApplyDebugKeywords();
     }
 
     private void PerformCPUCulling()
@@ -551,5 +650,6 @@ public class GrassManager : MonoBehaviour
         bladeIndexBufferLow?.Release();
 
         if (grassMaterialLow != null) Destroy(grassMaterialLow);
+        if (windNoiseTexture != null) Destroy(windNoiseTexture);
     }
 }
