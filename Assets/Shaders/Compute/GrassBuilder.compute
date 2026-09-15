@@ -6,9 +6,11 @@
 
 StructuredBuffer<TileData> _VisibleTiles;
 AppendStructuredBuffer<GrassData> _GrassDataBuffer;
+AppendStructuredBuffer<GrassData> _GrassDataBufferLow;
 
 float _TileSize;
 uint _GrassPerAxis;
+float _GrassLODSwitchDist;
 
 // Fine (per-blade) culling: the CPU pass already discards whole tiles outside
 // the frustum, but a partially-overlapping tile still has individual blades
@@ -29,6 +31,10 @@ Texture2D<float4> _ControlTexture;
 float _GrassFadeStartDist;
 float _GrassFadeEndDist;
 float3 _GrassCameraPosition;
+
+float _GrassDensityFadeStartDist;
+float _GrassDensityFadeEndDist;
+float _GrassMinDensityFraction;
 
 bool IsInsideFrustum(float3 worldPos, float radius)
 {
@@ -110,6 +116,11 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
     if (GetGrassFadeShrink(worldPos, _GrassCameraPosition, _GrassFadeStartDist, _GrassFadeEndDist) <= 0.0)
         return;
 
+    float distToCamera = length(worldPos - _GrassCameraPosition);
+    float densityKeepFraction = lerp(1.0, _GrassMinDensityFraction, smoothstep(_GrassDensityFadeStartDist, _GrassDensityFadeEndDist, distToCamera));
+    if (HashToFloat01(bladeHash, 10) >= densityKeepFraction)
+        return;
+
     // Random facing direction (normalized 2D vector in the world XZ plane)
     float facingAngle = HashToFloat01(bladeHash, 2) * 6.28318530718; // 2*PI
     float2 randomFacing = float2(cos(facingAngle), sin(facingAngle));
@@ -153,5 +164,8 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
     grass.windStrength = windStrength;
     grass.bladeHash = bladeHash;
 
-    _GrassDataBuffer.Append(grass);
+    if (distToCamera >= _GrassLODSwitchDist)
+        _GrassDataBufferLow.Append(grass);
+    else
+        _GrassDataBuffer.Append(grass);
 }

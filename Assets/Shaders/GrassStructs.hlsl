@@ -38,4 +38,9 @@ float GetGrassFadeShrink(float3 grassPosition, float3 cameraPosition, float fade
     return shrink < GRASS_FADE_CUTOFF ? 0.0 : shrink;
 }
 
+float GetGrassLODBendFade(float distToCamera, float blendStartDist, float lodSwitchDist)
+{
+    return 1.0 - smoothstep(blendStartDist, lodSwitchDist, distToCamera);
+}
+
 #endif

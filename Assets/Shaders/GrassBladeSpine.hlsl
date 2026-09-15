@@ -6,8 +6,12 @@
 // 15-vertex strip: 7 tapering left/right pairs + 1 tip.
 // Submitted as an indexed triangle list (39 indices, GrassManager.cs), so
 // vertexID below is already a strip index - no strip topology needed.
-#define BLADE_ROW_COUNT 7
-#define BLADE_STRIP_VERTEX_COUNT 15
+#if defined(_GRASS_LOD_LOW)
+    #define BLADE_STRIP_VERTEX_COUNT 3
+#else
+    #define BLADE_ROW_COUNT 7
+    #define BLADE_STRIP_VERTEX_COUNT 15
+#endif
 
 // Fake-round cross-section: left/right vertices get their normal tilted away
 // from the flat face, so a single-sided ribbon reads as a rounded blade under lighting.
@@ -86,20 +90,25 @@ float GetBladeWidthAt(BladeParams p, float t)
     return p.width * (1.0 - t);
 }
 
-// The 15-vertex strip's actual position logic. stripIndex is in [0, BLADE_STRIP_VERTEX_COUNT).
+// The strip's actual position logic. stripIndex is in [0, BLADE_STRIP_VERTEX_COUNT).
 float3 GetStripVertexPosition(BladeParams p, uint stripIndex)
 {
+#if defined(_GRASS_LOD_LOW)
+    bool isTip = stripIndex == 2;
+    float t = isTip ? 1.0 : 0.0;
+    float sideSign = (stripIndex == 0) ? -1.0 : 1.0;
+#else
     uint row = stripIndex / 2;
     uint side = stripIndex % 2;
 
     // The final vertex (14) is the single tip apex where the strip converges.
     bool isTip = stripIndex == (BLADE_STRIP_VERTEX_COUNT - 1);
     float t = isTip ? 1.0 : row / (float)BLADE_ROW_COUNT;
+    float sideSign = (side == 0) ? -1.0 : 1.0;
+#endif
 
     float3 center = EvaluateCubicBezier(p, t);
     float width = isTip ? 0.0 : GetBladeWidthAt(p, t);
-
-    float sideSign = (side == 0) ? -1.0 : 1.0;
     return center + float3(sideSign * width, 0, 0);
 }
 
@@ -110,9 +119,13 @@ float3 GetBladeLocalPosition(BladeParams p, uint stripIndex)
 
 float GetBladeHeightPercent(uint stripIndex)
 {
+#if defined(_GRASS_LOD_LOW)
+    return stripIndex == 2 ? 1.0 : 0.0;
+#else
     bool isTip = stripIndex == (BLADE_STRIP_VERTEX_COUNT - 1);
     uint row = stripIndex / 2;
     return isTip ? 1.0 : row / (float)BLADE_ROW_COUNT;
+#endif
 }
 
 float3 RotateAroundY(float3 v, float angle)
@@ -132,11 +145,15 @@ float3 GetBladeLocalNormal(BladeParams p, uint stripIndex, uint bladeHash)
     float yzLen = length(yz);
     float3 faceNormal = yzLen > 1e-5 ? float3(0, -yz.y, yz.x) / yzLen : float3(0, 0, 1);
 
+#if defined(_GRASS_LOD_LOW)
+    return faceNormal;
+#else
     float sideSign = (stripIndex % 2 == 0) ? -1.0 : 1.0;
     float jitter = HashToSigned(bladeHash, 30) * BLADE_ROUNDNESS_JITTER;
     float angle = sideSign * (BLADE_ROUNDNESS_ANGLE + jitter);
 
     return RotateAroundY(faceNormal, angle);
+#endif
 }
 
 // Builds the blade's world-space orientation from its facing direction.

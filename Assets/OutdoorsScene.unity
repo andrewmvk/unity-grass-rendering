@@ -1090,7 +1090,12 @@ MonoBehaviour:
   grassPerAxisPerTile: 48
   renderDistanceInTiles: 16
   heightFadeStartFraction: 0.75
+  lodSwitchDistance: 20
+  lodBendBlendDistance: 5
+  densityFadeStartDistance: 20
+  minDensityFraction: 0.1
   terrain: {fileID: 1583307900}
+  slopeLeanStrength: 0.6
   bladeHeight: 1.3
   bladeWidth: 0.09
   bladeBend: 0.25

@@ -18,6 +18,7 @@ Shader "Custom/DummyGrass"
             #pragma vertex vert
             #pragma fragment frag
             #pragma target 4.5
+            #pragma multi_compile_local _ _GRASS_LOD_LOW
 
             #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
             #include "Packages/com.unity.render-pipelines.high-definition/Runtime/ShaderLibrary/ShaderVariables.hlsl"
@@ -67,6 +68,7 @@ Shader "Custom/DummyGrass"
             #pragma vertex vert
             #pragma fragment frag
             #pragma target 4.5
+            #pragma multi_compile_local _ _GRASS_LOD_LOW
 
             #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
             #include "Packages/com.unity.render-pipelines.high-definition/Runtime/ShaderLibrary/ShaderVariables.hlsl"
@@ -112,7 +114,6 @@ Shader "Custom/DummyGrass"
             float4 frag (v2f i, bool isFrontFace : SV_IsFrontFace) : SV_Target
             {
                 float3 normal = normalize(i.normalWS) * (isFrontFace ? 1.0 : -1.0);
-                float3 viewDir = normalize(-i.positionWS);
                 float3 lightDir = normalize(_GrassLightDir);
 
                 float3 baseColor = lerp(_GrassBaseColorLow.rgb, _GrassBaseColorHigh.rgb, HashToFloat01(i.bladeHash, 40));
@@ -120,14 +121,28 @@ Shader "Custom/DummyGrass"
                 float3 albedo = lerp(baseColor, tipColor, pow(saturate(i.heightPercent), 1.5));
                 albedo *= 1.0 + HashToSigned(i.bladeHash, 42) * _GrassShadeJitterStrength;
 
+                float wrap = 0.5;
+                float diffuseTerm = saturate((dot(normal, lightDir) + wrap) / (1.0 + wrap));
+
+#if defined(_GRASS_LOD_LOW)
+                float3 viewDir = normalize(-i.positionWS);
+                float3 diffuse = diffuseTerm * _GrassLightColor.rgb * albedo;
+
+                // Fake subsurface scattering: light glows through the blade when backlit.
+                float backLight = saturate((dot(viewDir, -lightDir) + wrap) / (1.0 + wrap));
+                float3 subsurface = pow(backLight, 2.0) * _GrassSSSStrength * _GrassLightColor.rgb * albedo * (0.4 + 0.6 * i.heightPercent);
+
+                float3 ambient = _GrassAmbientColor.rgb * albedo;
+                float3 color = ambient + diffuse + subsurface;
+                return float4(color, 1.0);
+#else
+                float3 viewDir = normalize(-i.positionWS);
+
                 // Fake AO: dense grass self-shadows near the root, fading out fast with height.
                 float rootAO = lerp(1.0 - _GrassRootAOStrength, 1.0, saturate(i.heightPercent / max(_GrassRootAOHeight, 1e-4)));
                 float occlusion = rootAO * rootAO;
                 albedo *= occlusion;
 
-                // Half-Lambert wrap diffuse, so the unlit side of a blade doesn't go fully black.
-                float wrap = 0.5;
-                float diffuseTerm = saturate((dot(normal, lightDir) + wrap) / (1.0 + wrap));
                 float3 diffuse = diffuseTerm * _GrassLightColor.rgb * albedo;
 
                 float3 halfDir = normalize(lightDir + viewDir);
@@ -142,6 +157,7 @@ Shader "Custom/DummyGrass"
                 float3 ambient = _GrassAmbientColor.rgb * albedo;
                 float3 color = ambient + diffuse + specular + subsurface;
                 return float4(color, 1.0);
+#endif
             }
             ENDHLSL
         }

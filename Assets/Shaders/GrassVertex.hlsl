@@ -19,6 +19,9 @@ float _GrassFadeEndDist;
 // needs to be correct for a real multi-camera/XR production setup.
 float3 _GrassCameraPosition;
 
+float _GrassLODSwitchDist;
+float _GrassLODBendBlendDist;
+
 BladeParams GetBladeParams(GrassData grass)
 {
     BladeParams p;
@@ -32,6 +35,12 @@ BladeParams GetBladeParams(GrassData grass)
     p.height *= shrink;
     p.tilt *= shrink;
     p.bend *= shrink;
+
+#if !defined(_GRASS_LOD_LOW)
+    float distToCamera = length(grass.position - _GrassCameraPosition);
+    float bendFade = GetGrassLODBendFade(distToCamera, _GrassLODSwitchDist - _GrassLODBendBlendDist, _GrassLODSwitchDist);
+    p.bend *= bendFade;
+#endif
 
     return p;
 }
