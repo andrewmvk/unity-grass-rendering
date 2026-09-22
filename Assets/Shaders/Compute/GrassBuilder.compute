@@ -22,7 +22,7 @@ float4 _FrustumPlanes[6];
 // the root as a sphere of this radius avoids culling a blade whose tip still leans into view.
 float _BladeBoundingRadius;
 
-// Ground-validity mask: the terrain's painted layer-0 alphamap. >0.5 means grass is allowed to grow there.
+// Ground mask: terrain's painted layer-0 alphamap weight, 0-1, used as a keep-probability.
 Texture2D<float4> _ControlTexture;
 
 // Blades already faded to nothing are skipped
@@ -45,19 +45,27 @@ bool IsInsideFrustum(float3 worldPos, float radius)
     return true;
 }
 
-bool IsValidGround(float3 worldPos)
+float SampleGroundMask(float3 worldPos)
 {
     float2 local = worldPos.xz - _TerrainOriginXZ;
     if (any(local < 0) || any(local > _TerrainSize))
-        return false; // outside the terrain's footprint entirely
+        return 0.0;
 
     float2 uv = local / _TerrainSize;
     uint texWidth, texHeight;
     _ControlTexture.GetDimensions(texWidth, texHeight);
     uint2 texel = uint2(uv * float2(texWidth - 1, texHeight - 1));
 
-    return _ControlTexture.Load(int3(texel, 0)).r > 0.5;
+    return _ControlTexture.Load(int3(texel, 0)).r;
 }
+
+// Below this main-layer weight, treat the ground as a different texture entirely: no
+// grass exists there at all, so stray near-zero weights (paint blend noise) can't roll a blade.
+static const float GroundMaskDeadZone = 0.1;
+
+// Floor on the shrink applied to tilt/bend/height as weight approaches the dead zone,
+// so a blade surviving only near the boundary shrinks instead of disappearing to nothing.
+static const float MinGroundMaskParamScale = 0.4;
 
 // Baseline blade shape, each blade below is randomized around these values.
 float _BaseHeight;
@@ -111,9 +119,15 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
 
     worldPos.y = SampleTerrainHeight(worldPos.xz);
 
-    // Fine culling: skip this thread entirely if the blade's bounding sphere falls
-    // outside the frustum, or its root sits off valid ground.
-    if (!IsInsideFrustum(worldPos, _BladeBoundingRadius) || !IsValidGround(worldPos))
+    if (!IsInsideFrustum(worldPos, _BladeBoundingRadius))
+        return;
+
+    float groundMask = SampleGroundMask(worldPos);
+    if (groundMask <= GroundMaskDeadZone)
+        return;
+
+    float groundMaskBlend = saturate((groundMask - GroundMaskDeadZone) / (1.0 - GroundMaskDeadZone));
+    if (HashToFloat01(bladeHash, 8) >= groundMaskBlend)
         return;
 
     // Skip blades already faded to nothing by distance.
@@ -140,9 +154,11 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
     float2 downhillLeanFacing = slope > 1e-5 ? float2(downhill.y, -downhill.x) / slope : randomFacing;
     float2 facing = normalize(lerp(randomFacing, downhillLeanFacing, slope * _SlopeLeanStrength));
 
+    float groundMaskParamScale = lerp(MinGroundMaskParamScale, 1.0, groundMaskBlend);
+
     float width = max(0.001, _BaseWidth * (1.0 + HashToSigned(bladeHash, 4) * _ShapeVariance));
-    float tilt = _BaseTilt * (1.0 + HashToSigned(bladeHash, 5) * _ShapeVariance);
-    float bend = _BaseBend * (1.0 + HashToSigned(bladeHash, 6) * _ShapeVariance);
+    float tilt = _BaseTilt * (1.0 + HashToSigned(bladeHash, 5) * _ShapeVariance) * groundMaskParamScale;
+    float bend = _BaseBend * (1.0 + HashToSigned(bladeHash, 6) * _ShapeVariance) * groundMaskParamScale;
     float sideCurve = HashToSigned(bladeHash, 7) * _SideCurveStrength;
 
     // Every blade whose nearest Voronoi seed is the same clump cell shares this facing/color,
@@ -159,7 +175,7 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
     float clumpEdgeFraction = saturate(clumpDistToCenter / (_ClumpSize * 0.5));
     float clumpHeightScale = lerp(1.0, 1.0 - _ClumpHeightFalloff, clumpEdgeFraction);
 
-    float height = max(0.01, _BaseHeight * (1.0 + HashToSigned(bladeHash, 3) * _ShapeVariance) * clumpHeightScale);
+    float height = max(0.01, _BaseHeight * (1.0 + HashToSigned(bladeHash, 3) * _ShapeVariance) * clumpHeightScale * groundMaskParamScale);
 
     float windStrength = HashToFloat01(bladeHash, 9);
 

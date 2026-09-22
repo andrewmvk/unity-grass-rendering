@@ -768,7 +768,7 @@ Transform:
   m_GameObject: {fileID: 1109884383}
   serializedVersion: 2
   m_LocalRotation: {x: 0.1254226, y: -8.8357505e-10, z: 1.1170298e-10, w: 0.99210346}
-  m_LocalPosition: {x: 0, y: 3.2669735, z: -7.966478}
+  m_LocalPosition: {x: 0, y: 5.7869735, z: -7.966478}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -1050,7 +1050,7 @@ Transform:
   m_GameObject: {fileID: 1797639939}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalPosition: {x: 0, y: 2.52, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -1096,10 +1096,25 @@ MonoBehaviour:
   minDensityFraction: 0.1
   terrain: {fileID: 1583307900}
   slopeLeanStrength: 0.6
-  bladeHeight: 1.3
-  bladeWidth: 0.09
-  bladeBend: 0.25
-  bladeTilt: 1
+  clumpSize: 4
+  clumpJitterStrength: 1
+  clumpFacingStrength: 0.352
+  clumpColorA: {r: 0.33, g: 0.75, b: 0.26, a: 1}
+  clumpColorB: {r: 1, g: 0.82, b: 0.18, a: 1}
+  clumpColorStrength: 0.5
+  clumpHeightFalloff: 0.264
+  debugClumpView: 0
+  windDirectionDegrees: 45
+  windSpeed: 24
+  windGustSize: 58.1
+  windBendAmount: 0.35
+  windStrengthMultiplier: 1.49
+  windNoiseResolution: 256
+  debugWindView: 0
+  bladeHeight: 1.45
+  bladeWidth: 0.06
+  bladeBend: 0.19
+  bladeTilt: 0.82
   shapeVariance: 0.3
   sideCurveStrength: 0.05
   jitterStrength: 1
@@ -1223,7 +1238,7 @@ Transform:
   m_GameObject: {fileID: 1823688464}
   serializedVersion: 2
   m_LocalRotation: {x: 0.12542261, y: -8.8357505e-10, z: 1.1170235e-10, w: 0.9921034}
-  m_LocalPosition: {x: 0, y: 3.2669735, z: -7.966478}
+  m_LocalPosition: {x: 0, y: 5.7869735, z: -7.966478}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
