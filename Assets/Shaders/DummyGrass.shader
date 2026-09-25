@@ -25,7 +25,13 @@ Shader "Custom/DummyGrass"
             #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/NormalBuffer.hlsl"
             #include "GrassVertex.hlsl"
 
-            struct v2f { float4 pos : SV_POSITION; float3 normalWS : TEXCOORD0; };
+            struct v2f
+            {
+                float4 pos : SV_POSITION;
+                float3 normalWS : TEXCOORD0;
+                nointerpolation float3 groundNormalWS : TEXCOORD1;
+                nointerpolation float farFade : TEXCOORD2;
+            };
 
             v2f vert (uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
             {
@@ -35,6 +41,8 @@ Shader "Custom/DummyGrass"
                 v2f o;
                 o.pos = TransformWorldToHClip(cameraRelativePos);
                 o.normalWS = g.normalWS;
+                o.groundNormalWS = g.groundNormalWS;
+                o.farFade = g.farFade;
                 return o;
             }
 
@@ -44,7 +52,7 @@ Shader "Custom/DummyGrass"
             float4 frag (v2f i, bool isFrontFace : SV_IsFrontFace) : SV_Target
             {
                 NormalData normalData;
-                normalData.normalWS = normalize(i.normalWS) * (isFrontFace ? 1.0 : -1.0);
+                normalData.normalWS = GetGrassShadingNormal(i.normalWS, i.groundNormalWS, i.farFade, isFrontFace);
                 normalData.perceptualRoughness = 1.0;
 
                 float4 outNormalBuffer;
@@ -100,6 +108,8 @@ Shader "Custom/DummyGrass"
                 nointerpolation uint bladeHash : TEXCOORD3;
                 nointerpolation float3 clumpColor : TEXCOORD4;
                 nointerpolation float windNoise : TEXCOORD5;
+                nointerpolation float3 groundNormalWS : TEXCOORD6;
+                nointerpolation float farFade : TEXCOORD7;
             };
 
             v2f vert (uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
@@ -115,6 +125,8 @@ Shader "Custom/DummyGrass"
                 o.bladeHash = g.bladeHash;
                 o.clumpColor = g.clumpColor;
                 o.windNoise = g.windNoise;
+                o.groundNormalWS = g.groundNormalWS;
+                o.farFade = g.farFade;
                 return o;
             }
 
@@ -140,13 +152,16 @@ Shader "Custom/DummyGrass"
                     return float4(WindHeatMap(i.windNoise), 1.0);
                 #endif
 
-                float3 normal = normalize(i.normalWS) * (isFrontFace ? 1.0 : -1.0);
+                float3 normal = GetGrassShadingNormal(i.normalWS, i.groundNormalWS, i.farFade, isFrontFace);
                 float3 lightDir = normalize(_GrassLightDir);
+                float nearFade = 1.0 - i.farFade;
 
-                float3 baseColor = lerp(_GrassBaseColorLow.rgb, _GrassBaseColorHigh.rgb, HashToFloat01(i.bladeHash, 40));
-                float3 tipColor = lerp(_GrassTipColorLow.rgb, _GrassTipColorHigh.rgb, HashToFloat01(i.bladeHash, 41));
+                float baseColorVariation = lerp(0.5, HashToFloat01(i.bladeHash, 40), nearFade);
+                float tipColorVariation = lerp(0.5, HashToFloat01(i.bladeHash, 41), nearFade);
+                float3 baseColor = lerp(_GrassBaseColorLow.rgb, _GrassBaseColorHigh.rgb, baseColorVariation);
+                float3 tipColor = lerp(_GrassTipColorLow.rgb, _GrassTipColorHigh.rgb, tipColorVariation);
                 float3 albedo = lerp(baseColor, tipColor, pow(saturate(i.heightPercent), 1.5));
-                albedo *= 1.0 + HashToSigned(i.bladeHash, 42) * _GrassShadeJitterStrength;
+                albedo *= 1.0 + HashToSigned(i.bladeHash, 42) * _GrassShadeJitterStrength * nearFade;
                 albedo = lerp(albedo, albedo * i.clumpColor, _ClumpColorStrength);
 
                 float wrap = 0.5;
@@ -176,7 +191,7 @@ Shader "Custom/DummyGrass"
                     float3 halfDir = normalize(lightDir + viewDir);
                     float specNormalization = (_GrassSpecPower * 0.5 + 1.0) / PI;
                     float specTerm = specNormalization * pow(saturate(dot(normal, halfDir)), _GrassSpecPower);
-                    float3 specular = specTerm * _GrassSpecStrength * _GrassLightColor.rgb * occlusion;
+                    float3 specular = specTerm * _GrassSpecStrength * _GrassLightColor.rgb * occlusion * nearFade;
 
                     // Fake subsurface scattering: light glows through the blade when backlit.
                     float backLight = saturate((dot(viewDir, -lightDir) + wrap) / (1.0 + wrap));

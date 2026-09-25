@@ -27,7 +27,9 @@ public class GrassManager : MonoBehaviour
     private float lodSwitchDistance = 20f;
     [SerializeField] [Tooltip("Blade curvature (bend) fades to 0 over this distance just before lodSwitchDistance, so the switch to the flat low-LOD shape is seamless.")]
     private float lodBendBlendDistance = 5f;
-    
+    [SerializeField] [Tooltip("Whether low-LOD blades also render in HDRP's depth prepass. Off draws them in a single forward pass, but they no longer write HDRP's normal buffer or occlude the terrain's GBuffer pass.")]
+    private bool lowLODDepthPrepass = false;
+
     [Header("Density LOD")]
     [SerializeField] [Tooltip("Distance from camera where blade density starts thinning, down to minDensityFraction at the render distance edge.")]
     private float densityFadeStartDistance = 20f;
@@ -100,6 +102,10 @@ public class GrassManager : MonoBehaviour
     private float rootAOStrength = 0.5f;
     [SerializeField] [Range(0.01f, 1f)] [Tooltip("Height percent at which the fake root AO fades to fully lit.")]
     private float rootAOHeight = 0.5f;
+    [SerializeField] [Tooltip("Distance from camera where blades start swapping their own normal, color variation and specular for terrain-matched shading.")]
+    private float farShadingStartDistance = 10f;
+    [SerializeField] [Tooltip("Distance from camera where blades are fully shaded like the terrain beneath them.")]
+    private float farShadingEndDistance = 40f;
 
     [Header("References")]
     [SerializeField] [Tooltip("Drives frustum culling, tile streaming, and the distance fade. Defaults to Camera.main if left empty.")]
@@ -149,6 +155,7 @@ public class GrassManager : MonoBehaviour
     private const string LODLowKeyword = "_GRASS_LOD_LOW";
     private const string ClumpDebugKeyword = "_GRASS_DEBUG_CLUMP";
     private const string WindDebugKeyword = "_GRASS_DEBUG_WIND";
+    private const string DepthPrepassLightMode = "DepthForwardOnly";
     private Material grassMaterialLow;
 
     private Texture2D windNoiseTexture;
@@ -181,7 +188,7 @@ public class GrassManager : MonoBehaviour
         grassMaterial.DisableKeyword(LODLowKeyword);
         grassMaterialLow = new Material(grassMaterial);
         grassMaterialLow.EnableKeyword(LODLowKeyword);
-        ApplyDebugKeywords();
+        ApplyMaterialSettings();
 
         windNoiseTexture = GenerateWindNoiseTexture();
 
@@ -443,10 +450,10 @@ public class GrassManager : MonoBehaviour
             if (visibleTilesList.Count > 0)
             {
                 UpdateDistanceFadeGlobals();
+                UpdateWindGlobals();
                 DispatchGrassBuilder();
                 PrepareIndirectArgs();
                 UpdateLightingGlobals();
-                UpdateWindGlobals();
             }
         }
 
@@ -468,6 +475,8 @@ public class GrassManager : MonoBehaviour
         Shader.SetGlobalFloat("_GrassDensityFadeStartDist", densityFadeStartDistance);
         Shader.SetGlobalFloat("_GrassDensityFadeEndDist", renderDistanceWorld);
         Shader.SetGlobalFloat("_GrassMinDensityFraction", minDensityFraction);
+        Shader.SetGlobalFloat("_GrassFarShadingStartDist", farShadingStartDistance);
+        Shader.SetGlobalFloat("_GrassFarShadingEndDist", Mathf.Max(farShadingEndDistance, farShadingStartDistance + 0.01f));
     }
 
     private void UpdateLightingGlobals()
@@ -508,7 +517,7 @@ public class GrassManager : MonoBehaviour
         Shader.SetGlobalFloat("_WindStrengthMultiplier", windStrengthMultiplier);
     }
 
-    private void ApplyDebugKeywords()
+    private void ApplyMaterialSettings()
     {
         if (grassMaterial == null || grassMaterialLow == null) return;
 
@@ -516,6 +525,8 @@ public class GrassManager : MonoBehaviour
         SetKeyword(grassMaterialLow, ClumpDebugKeyword, debugClumpView);
         SetKeyword(grassMaterial, WindDebugKeyword, debugWindView);
         SetKeyword(grassMaterialLow, WindDebugKeyword, debugWindView);
+
+        grassMaterialLow.SetShaderPassEnabled(DepthPrepassLightMode, lowLODDepthPrepass);
     }
 
     private static void SetKeyword(Material material, string keyword, bool enabled)
@@ -526,7 +537,7 @@ public class GrassManager : MonoBehaviour
 
     private void OnValidate()
     {
-        ApplyDebugKeywords();
+        ApplyMaterialSettings();
     }
 
     private void PerformCPUCulling()
@@ -597,6 +608,7 @@ public class GrassManager : MonoBehaviour
         Texture2D[] alphamaps = data.alphamapTextures;
         Texture2D grassMask = alphamaps.Length > 0 ? alphamaps[0] : Texture2D.whiteTexture;
         grassBuilderCS.SetTexture(buildKernel, "_ControlTexture", grassMask);
+        grassBuilderCS.SetTexture(buildKernel, "_WindNoiseTexture", windNoiseTexture);
 
         int threadGroups = Mathf.CeilToInt(grassPerAxisPerTile / 8f);
         grassBuilderCS.Dispatch(buildKernel, threadGroups, threadGroups, visibleTilesList.Count);

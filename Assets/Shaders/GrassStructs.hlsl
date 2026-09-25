@@ -43,4 +43,9 @@ float GetGrassLODBendFade(float distToCamera, float blendStartDist, float lodSwi
     return 1.0 - smoothstep(blendStartDist, lodSwitchDist, distToCamera);
 }
 
+float GetGrassFarShadingFade(float distToCamera, float startDist, float endDist)
+{
+    return smoothstep(startDist, endDist, distToCamera);
+}
+
 #endif

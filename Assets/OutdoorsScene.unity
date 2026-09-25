@@ -1092,6 +1092,7 @@ MonoBehaviour:
   heightFadeStartFraction: 0.75
   lodSwitchDistance: 20
   lodBendBlendDistance: 5
+  lowLODDepthPrepass: 1
   densityFadeStartDistance: 20
   minDensityFraction: 0.1
   terrain: {fileID: 1583307900}
@@ -1131,6 +1132,8 @@ MonoBehaviour:
   subsurfaceStrength: 2
   rootAOStrength: 0.5
   rootAOHeight: 0.5
+  farShadingStartDistance: 9
+  farShadingEndDistance: 75
   mainCamera: {fileID: 1823688466}
   grassBuilderCS: {fileID: 7200000, guid: 1b8bb2e9391f40945a3cc24c1fded579, type: 3}
   grassMaterial: {fileID: 2100000, guid: 5868cbd8923a50743a55cf8ef66fc17d, type: 2}
@@ -1312,10 +1315,10 @@ MonoBehaviour:
   volumeAnchorOverride: {fileID: 0}
   antialiasing: 2
   SMAAQuality: 2
-  dithering: 1
+  dithering: 0
   stopNaNs: 0
   taaSharpenStrength: 0.5
-  TAAQuality: 1
+  TAAQuality: 2
   taaSharpenMode: 0
   taaRingingReduction: 0
   taaHistorySharpening: 0.35

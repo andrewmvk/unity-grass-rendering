@@ -34,6 +34,18 @@ float _GrassDensityFadeStartDist;
 float _GrassDensityFadeEndDist;
 float _GrassMinDensityFraction;
 
+float _GrassLODBendBlendDist;
+
+// Scrolling wind noise, sampled once per blade per frame. _WindScrollOffset is in world
+// units (not noise-UV space), so wind speed and gust size (_WindNoiseScale) stay independent.
+Texture2D<float4> _WindNoiseTexture;
+SamplerState sampler_WindNoiseTexture;
+float2 _WindScrollOffset;
+float2 _WindDirection;
+float _WindNoiseScale;
+float _WindBendAmount;
+float _WindStrengthMultiplier;
+
 bool IsInsideFrustum(float3 worldPos, float radius)
 {
     for (int i = 0; i < 6; i++)
@@ -178,6 +190,23 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
     float height = max(0.01, _BaseHeight * (1.0 + HashToSigned(bladeHash, 3) * _ShapeVariance) * clumpHeightScale * groundMaskParamScale);
 
     float windStrength = HashToFloat01(bladeHash, 9);
+    float2 windUV = (worldPos.xz + _WindScrollOffset) * _WindNoiseScale;
+    float windNoise = _WindNoiseTexture.SampleLevel(sampler_WindNoiseTexture, windUV, 0).r;
+    float windLean = windNoise * windStrength * _WindStrengthMultiplier;
+
+    // Decomposes the world-space wind lean into this blade's own local tilt (forward)
+    // and sideCurve (right) axes, so every blade sways toward the same world direction
+    // regardless of which way it individually faces.
+    float2 right2D = facing;
+    float2 forward2D = float2(-facing.y, facing.x);
+    float2 windOffset2D = _WindDirection * windLean * _WindBendAmount;
+    tilt += dot(windOffset2D, forward2D);
+    sideCurve += dot(windOffset2D, right2D);
+
+    float shrink = GetGrassFadeShrink(worldPos, _GrassCameraPosition, _GrassFadeStartDist, _GrassFadeEndDist);
+    height *= shrink;
+    tilt *= shrink;
+    bend *= shrink * GetGrassLODBendFade(distToCamera, _GrassLODSwitchDist - _GrassLODBendBlendDist, _GrassLODSwitchDist);
 
     GrassData grass;
     grass.position = worldPos;
@@ -189,7 +218,7 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
     grass.sideCurve = sideCurve;
     grass.clumpFacing = clumpFacing;
     grass.clumpColor = clumpColor;
-    grass.windStrength = windStrength;
+    grass.windStrength = windNoise;
     grass.bladeHash = bladeHash;
 
     if (distToCamera >= _GrassLODSwitchDist)

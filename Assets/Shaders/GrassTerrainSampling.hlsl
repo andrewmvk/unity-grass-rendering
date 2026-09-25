@@ -10,12 +10,12 @@ float2 _TerrainSize;
 float _TerrainBaseY;
 float _TerrainHeightScale;
 
-SamplerState sampler_LinearClamp;
+SamplerState sampler_GrassLinearClamp;
 
 float SampleTerrainHeight(float2 worldPosXZ)
 {
     float2 uv = saturate((worldPosXZ - _TerrainOriginXZ) / _TerrainSize);
-    float normalizedHeight = _HeightmapTexture.SampleLevel(sampler_LinearClamp, uv, 0).r;
+    float normalizedHeight = _HeightmapTexture.SampleLevel(sampler_GrassLinearClamp, uv, 0).r;
     return _TerrainBaseY + normalizedHeight * _TerrainHeightScale;
 }
 

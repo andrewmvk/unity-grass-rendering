@@ -92,9 +92,11 @@ float GetBladeWidthAt(BladeParams p, float t)
 float3 GetStripVertexPosition(BladeParams p, uint stripIndex)
 {
 #if defined(_GRASS_LOD_LOW)
-    bool isTip = stripIndex == 2;
-    float t = isTip ? 1.0 : 0.0;
+    if (stripIndex == 2)
+        return float3(p.sideCurve, p.height, p.tilt);
+
     float sideSign = (stripIndex == 0) ? -1.0 : 1.0;
+    return float3(sideSign * p.width, 0, 0);
 #else
     uint row = stripIndex / 2;
     uint side = stripIndex % 2;
@@ -103,11 +105,11 @@ float3 GetStripVertexPosition(BladeParams p, uint stripIndex)
     bool isTip = stripIndex == (BLADE_STRIP_VERTEX_COUNT - 1);
     float t = isTip ? 1.0 : row / (float)BLADE_ROW_COUNT;
     float sideSign = (side == 0) ? -1.0 : 1.0;
-#endif
 
     float3 center = EvaluateCubicBezier(p, t);
     float width = isTip ? 0.0 : GetBladeWidthAt(p, t);
     return center + float3(sideSign * width, 0, 0);
+#endif
 }
 
 float3 GetBladeLocalPosition(BladeParams p, uint stripIndex)
@@ -137,6 +139,11 @@ float3 RotateAroundY(float3 v, float angle)
 // tangent, then rotated outward per side to fake a rounded cross-section.
 float3 GetBladeLocalNormal(BladeParams p, uint stripIndex, uint bladeHash)
 {
+#if defined(_GRASS_LOD_LOW)
+    float2 chordYZ = float2(p.height, p.tilt);
+    float chordLen = length(chordYZ);
+    return chordLen > 1e-5 ? float3(0, -chordYZ.y, chordYZ.x) / chordLen : float3(0, 0, 1);
+#else
     float t = GetBladeHeightPercent(stripIndex);
     float3 tangent = EvaluateCubicBezierTangent(p, t);
 
@@ -144,9 +151,6 @@ float3 GetBladeLocalNormal(BladeParams p, uint stripIndex, uint bladeHash)
     float yzLen = length(yz);
     float3 faceNormal = yzLen > 1e-5 ? float3(0, -yz.y, yz.x) / yzLen : float3(0, 0, 1);
 
-#if defined(_GRASS_LOD_LOW)
-    return faceNormal;
-#else
     float sideSign = (stripIndex % 2 == 0) ? -1.0 : 1.0;
     float jitter = HashToSigned(bladeHash, 30) * BLADE_ROUNDNESS_JITTER;
     float angle = sideSign * (BLADE_ROUNDNESS_ANGLE + jitter);
