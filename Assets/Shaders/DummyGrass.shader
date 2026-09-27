@@ -18,7 +18,6 @@ Shader "Custom/DummyGrass"
             #pragma vertex vert
             #pragma fragment frag
             #pragma target 4.5
-            #pragma multi_compile_local _ _GRASS_LOD_LOW
 
             #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
             #include "Packages/com.unity.render-pipelines.high-definition/Runtime/ShaderLibrary/ShaderVariables.hlsl"
@@ -102,6 +101,9 @@ Shader "Custom/DummyGrass"
             struct v2f
             {
                 float4 pos : SV_POSITION;
+            #if defined(_GRASS_LOD_LOW)
+                float3 color : TEXCOORD0;
+            #else
                 float3 positionWS : TEXCOORD0; // camera-relative
                 float3 normalWS : TEXCOORD1;
                 float heightPercent : TEXCOORD2;
@@ -110,25 +112,8 @@ Shader "Custom/DummyGrass"
                 nointerpolation float windNoise : TEXCOORD5;
                 nointerpolation float3 groundNormalWS : TEXCOORD6;
                 nointerpolation float farFade : TEXCOORD7;
+            #endif
             };
-
-            v2f vert (uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
-            {
-                GrassVertexData g = GetGrassVertexData(vertexID, instanceID);
-                float3 cameraRelativePos = GetCameraRelativePositionWS(g.positionWS);
-
-                v2f o;
-                o.pos = TransformWorldToHClip(cameraRelativePos);
-                o.positionWS = cameraRelativePos;
-                o.normalWS = g.normalWS;
-                o.heightPercent = g.heightPercent;
-                o.bladeHash = g.bladeHash;
-                o.clumpColor = g.clumpColor;
-                o.windNoise = g.windNoise;
-                o.groundNormalWS = g.groundNormalWS;
-                o.farFade = g.farFade;
-                return o;
-            }
 
             // Blue (calm) -> green -> yellow -> red (strong gust), for the wind debug view.
             float3 WindHeatMap(float t)
@@ -143,64 +128,87 @@ Shader "Custom/DummyGrass"
                 return t < 0.33 ? low : high;
             }
 
-            float4 frag (v2f i, bool isFrontFace : SV_IsFrontFace) : SV_Target
+            float3 GetGrassColor(float3 normal, float3 viewDir, float heightPercent, uint bladeHash, float3 clumpColor, float windNoise, float farFade)
             {
-                #if defined(_GRASS_DEBUG_CLUMP)
-                    return float4(i.clumpColor, 1.0);
-                #endif
-                #if defined(_GRASS_DEBUG_WIND)
-                    return float4(WindHeatMap(i.windNoise), 1.0);
-                #endif
-
-                float3 normal = GetGrassShadingNormal(i.normalWS, i.groundNormalWS, i.farFade, isFrontFace);
+            #if defined(_GRASS_DEBUG_CLUMP)
+                return clumpColor;
+            #elif defined(_GRASS_DEBUG_WIND)
+                return WindHeatMap(windNoise);
+            #else
                 float3 lightDir = normalize(_GrassLightDir);
-                float nearFade = 1.0 - i.farFade;
+                float nearFade = 1.0 - farFade;
 
-                float baseColorVariation = lerp(0.5, HashToFloat01(i.bladeHash, 40), nearFade);
-                float tipColorVariation = lerp(0.5, HashToFloat01(i.bladeHash, 41), nearFade);
+                float baseColorVariation = lerp(0.5, HashToFloat01(bladeHash, 40), nearFade);
+                float tipColorVariation = lerp(0.5, HashToFloat01(bladeHash, 41), nearFade);
                 float3 baseColor = lerp(_GrassBaseColorLow.rgb, _GrassBaseColorHigh.rgb, baseColorVariation);
                 float3 tipColor = lerp(_GrassTipColorLow.rgb, _GrassTipColorHigh.rgb, tipColorVariation);
-                float3 albedo = lerp(baseColor, tipColor, pow(saturate(i.heightPercent), 1.5));
-                albedo *= 1.0 + HashToSigned(i.bladeHash, 42) * _GrassShadeJitterStrength * nearFade;
-                albedo = lerp(albedo, albedo * i.clumpColor, _ClumpColorStrength);
+                float3 albedo = lerp(baseColor, tipColor, pow(saturate(heightPercent), 1.5));
+                albedo *= 1.0 + HashToSigned(bladeHash, 42) * _GrassShadeJitterStrength * nearFade;
+                albedo = lerp(albedo, albedo * clumpColor, _ClumpColorStrength);
+
+                #if !defined(_GRASS_LOD_LOW)
+                    // Fake AO: dense grass self-shadows near the root, fading out fast with height.
+                    float rootAO = lerp(1.0 - _GrassRootAOStrength, 1.0, saturate(heightPercent / max(_GrassRootAOHeight, 1e-4)));
+                    float occlusion = rootAO * rootAO;
+                    albedo *= occlusion;
+                #endif
 
                 float wrap = 0.5;
                 float diffuseTerm = saturate((dot(normal, lightDir) + wrap) / (1.0 + wrap));
+                float3 diffuse = diffuseTerm * _GrassLightColor.rgb * albedo;
 
-                #if defined(_GRASS_LOD_LOW)
-                    float3 viewDir = normalize(-i.positionWS);
-                    float3 diffuse = diffuseTerm * _GrassLightColor.rgb * albedo;
+                // Fake subsurface scattering: light glows through the blade when backlit.
+                float backLight = saturate((dot(viewDir, -lightDir) + wrap) / (1.0 + wrap));
+                float3 subsurface = pow(backLight, 2.0) * _GrassSSSStrength * _GrassLightColor.rgb * albedo * (0.4 + 0.6 * heightPercent);
 
-                    // Fake subsurface scattering: light glows through the blade when backlit.
-                    float backLight = saturate((dot(viewDir, -lightDir) + wrap) / (1.0 + wrap));
-                    float3 subsurface = pow(backLight, 2.0) * _GrassSSSStrength * _GrassLightColor.rgb * albedo * (0.4 + 0.6 * i.heightPercent);
+                float3 ambient = _GrassAmbientColor.rgb * albedo;
+                float3 color = ambient + diffuse + subsurface;
 
-                    float3 ambient = _GrassAmbientColor.rgb * albedo;
-                    float3 color = ambient + diffuse + subsurface;
-                    return float4(color, 1.0);
-                #else
-                    float3 viewDir = normalize(-i.positionWS);
-
-                    // Fake AO: dense grass self-shadows near the root, fading out fast with height.
-                    float rootAO = lerp(1.0 - _GrassRootAOStrength, 1.0, saturate(i.heightPercent / max(_GrassRootAOHeight, 1e-4)));
-                    float occlusion = rootAO * rootAO;
-                    albedo *= occlusion;
-
-                    float3 diffuse = diffuseTerm * _GrassLightColor.rgb * albedo;
-
+                #if !defined(_GRASS_LOD_LOW)
                     float3 halfDir = normalize(lightDir + viewDir);
                     float specNormalization = (_GrassSpecPower * 0.5 + 1.0) / PI;
                     float specTerm = specNormalization * pow(saturate(dot(normal, halfDir)), _GrassSpecPower);
-                    float3 specular = specTerm * _GrassSpecStrength * _GrassLightColor.rgb * occlusion * nearFade;
-
-                    // Fake subsurface scattering: light glows through the blade when backlit.
-                    float backLight = saturate((dot(viewDir, -lightDir) + wrap) / (1.0 + wrap));
-                    float3 subsurface = pow(backLight, 2.0) * _GrassSSSStrength * _GrassLightColor.rgb * albedo * (0.4 + 0.6 * i.heightPercent);
-
-                    float3 ambient = _GrassAmbientColor.rgb * albedo;
-                    float3 color = ambient + diffuse + specular + subsurface;
-                    return float4(color, 1.0);
+                    color += specTerm * _GrassSpecStrength * _GrassLightColor.rgb * occlusion * nearFade;
                 #endif
+
+                return color;
+            #endif
+            }
+
+            v2f vert (uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
+            {
+                GrassVertexData g = GetGrassVertexData(vertexID, instanceID);
+                float3 cameraRelativePos = GetCameraRelativePositionWS(g.positionWS);
+
+                v2f o;
+                o.pos = TransformWorldToHClip(cameraRelativePos);
+            #if defined(_GRASS_LOD_LOW)
+                float3 viewDir = normalize(-cameraRelativePos);
+                bool facesCamera = dot(g.normalWS, viewDir) >= 0.0;
+                float3 normal = GetGrassShadingNormal(g.normalWS, g.groundNormalWS, g.farFade, facesCamera);
+                o.color = GetGrassColor(normal, viewDir, g.heightPercent, g.bladeHash, g.clumpColor, g.windNoise, g.farFade);
+            #else
+                o.positionWS = cameraRelativePos;
+                o.normalWS = g.normalWS;
+                o.heightPercent = g.heightPercent;
+                o.bladeHash = g.bladeHash;
+                o.clumpColor = g.clumpColor;
+                o.windNoise = g.windNoise;
+                o.groundNormalWS = g.groundNormalWS;
+                o.farFade = g.farFade;
+            #endif
+                return o;
+            }
+
+            float4 frag (v2f i, bool isFrontFace : SV_IsFrontFace) : SV_Target
+            {
+            #if defined(_GRASS_LOD_LOW)
+                return float4(i.color, 1.0);
+            #else
+                float3 normal = GetGrassShadingNormal(i.normalWS, i.groundNormalWS, i.farFade, isFrontFace);
+                float3 viewDir = normalize(-i.positionWS);
+                return float4(GetGrassColor(normal, viewDir, i.heightPercent, i.bladeHash, i.clumpColor, i.windNoise, i.farFade), 1.0);
+            #endif
             }
             ENDHLSL
         }

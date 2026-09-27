@@ -5,8 +5,8 @@ using UnityEngine.Rendering;
 
 public class GrassManager : MonoBehaviour
 {
-    // Worst-case bounds (Sucker Punch's approach). Buffers are sized for these once at
-    // Start, so the sliders below can be tuned live without ever reallocating.
+    // Slider limits. The tile streaming pool is sized for these once at Start; the grass
+    // buffers instead grow to the current settings (see EnsureGrassBufferCapacity).
     private const int MaxGrassPerAxisPerTile = 64;
     private const int MaxRenderDistanceInTiles = 16;
 
@@ -27,8 +27,6 @@ public class GrassManager : MonoBehaviour
     private float lodSwitchDistance = 20f;
     [SerializeField] [Tooltip("Blade curvature (bend) fades to 0 over this distance just before lodSwitchDistance, so the switch to the flat low-LOD shape is seamless.")]
     private float lodBendBlendDistance = 5f;
-    [SerializeField] [Tooltip("Whether low-LOD blades also render in HDRP's depth prepass. Off draws them in a single forward pass, but they no longer write HDRP's normal buffer or occlude the terrain's GBuffer pass.")]
-    private bool lowLODDepthPrepass = false;
 
     [Header("Density LOD")]
     [SerializeField] [Tooltip("Distance from camera where blade density starts thinning, down to minDensityFraction at the render distance edge.")]
@@ -141,6 +139,9 @@ public class GrassManager : MonoBehaviour
     private GraphicsBuffer argsBufferLow;
     private GraphicsBuffer bladeIndexBufferLow;
 
+    private int grassBufferCapacity;
+    private int grassBufferCapacityLow;
+
     private int maxTilesInView;
     private int buildKernel;
     private Vector4[] frustumPlaneVectors;
@@ -188,6 +189,7 @@ public class GrassManager : MonoBehaviour
         grassMaterial.DisableKeyword(LODLowKeyword);
         grassMaterialLow = new Material(grassMaterial);
         grassMaterialLow.EnableKeyword(LODLowKeyword);
+        grassMaterialLow.SetShaderPassEnabled(DepthPrepassLightMode, false);
         ApplyMaterialSettings();
 
         windNoiseTexture = GenerateWindNoiseTexture();
@@ -216,13 +218,7 @@ public class GrassManager : MonoBehaviour
     {
         visibleTilesBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, maxTilesInView, tileDataStride);
 
-        // Worst case: every streamable tile, at MaxGrassPerAxisPerTile density.
-        int maxGrassCount = maxTilesInView * MaxGrassPerAxisPerTile * MaxGrassPerAxisPerTile;
-
-        // Append buffer for grass instances. Both LOD tiers use the same worst-case
-        // size, since either could hold every visible blade (e.g. all beyond lodSwitchDistance).
-        grassDataBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Append, maxGrassCount, grassDataStride);
-        grassDataBufferLow = new GraphicsBuffer(GraphicsBuffer.Target.Append, maxGrassCount, grassDataStride);
+        EnsureGrassBufferCapacity();
 
         argsBuffer = CreateArgsBuffer(bladeIndexCount);
         argsBufferLow = CreateArgsBuffer(bladeIndexCountLow);
@@ -232,6 +228,54 @@ public class GrassManager : MonoBehaviour
 
         bladeIndexBufferLow = new GraphicsBuffer(GraphicsBuffer.Target.Index, (int)bladeIndexCountLow, sizeof(ushort));
         bladeIndexBufferLow.SetData(new ushort[] { 0, 1, 2 });
+    }
+
+    private void EnsureGrassBufferCapacity()
+    {
+        int bladesPerTile = grassPerAxisPerTile * grassPerAxisPerTile;
+        int requiredLow = CountMaxStreamedTiles() * bladesPerTile;
+        int requiredHigh = Mathf.Min(CountMaxBladesWithinDistance(lodSwitchDistance), requiredLow);
+
+        if (requiredHigh > grassBufferCapacity)
+        {
+            grassDataBuffer?.Release();
+            grassDataBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Append, requiredHigh, grassDataStride);
+            grassBufferCapacity = requiredHigh;
+        }
+
+        if (requiredLow > grassBufferCapacityLow)
+        {
+            grassDataBufferLow?.Release();
+            grassDataBufferLow = new GraphicsBuffer(GraphicsBuffer.Target.Append, requiredLow, grassDataStride);
+            grassBufferCapacityLow = requiredLow;
+        }
+    }
+
+    private int CountMaxStreamedTiles()
+    {
+        float renderDistanceWorld = renderDistanceInTiles * TileSize;
+        float renderDistanceWorldSqr = renderDistanceWorld * renderDistanceWorld;
+        float halfTile = TileSize * 0.5f;
+
+        int count = 0;
+        for (int dx = -renderDistanceInTiles; dx <= renderDistanceInTiles; dx++)
+        {
+            for (int dz = -renderDistanceInTiles; dz <= renderDistanceInTiles; dz++)
+            {
+                float nearestX = Mathf.Max(0f, Mathf.Abs(dx) * TileSize - halfTile);
+                float nearestZ = Mathf.Max(0f, Mathf.Abs(dz) * TileSize - halfTile);
+                if (nearestX * nearestX + nearestZ * nearestZ <= renderDistanceWorldSqr)
+                    count++;
+            }
+        }
+        return count;
+    }
+
+    private int CountMaxBladesWithinDistance(float distance)
+    {
+        float step = TileSize / grassPerAxisPerTile;
+        float reach = distance + step * Mathf.Sqrt(2f);
+        return Mathf.CeilToInt(Mathf.PI * reach * reach / (step * step));
     }
 
     // Procedural wind noise, generated once at startup and scrolled via a shader global
@@ -451,6 +495,7 @@ public class GrassManager : MonoBehaviour
             {
                 UpdateDistanceFadeGlobals();
                 UpdateWindGlobals();
+                EnsureGrassBufferCapacity();
                 DispatchGrassBuilder();
                 PrepareIndirectArgs();
                 UpdateLightingGlobals();
@@ -525,8 +570,6 @@ public class GrassManager : MonoBehaviour
         SetKeyword(grassMaterialLow, ClumpDebugKeyword, debugClumpView);
         SetKeyword(grassMaterial, WindDebugKeyword, debugWindView);
         SetKeyword(grassMaterialLow, WindDebugKeyword, debugWindView);
-
-        grassMaterialLow.SetShaderPassEnabled(DepthPrepassLightMode, lowLODDepthPrepass);
     }
 
     private static void SetKeyword(Material material, string keyword, bool enabled)
