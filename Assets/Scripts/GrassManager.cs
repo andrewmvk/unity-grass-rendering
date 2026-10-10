@@ -63,8 +63,8 @@ public class GrassManager : MonoBehaviour
     private float windSpeed = 4f;
     [SerializeField] [Range(1f, 100f)] [Tooltip("World-space size of a single wind gust patch. Larger = broader, slower-feeling gusts.")]
     private float windGustSize = 12f;
-    [SerializeField] [Tooltip("Max world-space horizontal offset a fully-gusted blade's tip is pushed by wind.")]
-    private float windBendAmount = 0.35f;
+    [SerializeField] [Tooltip("Lean a fully-gusted blade gains from wind, added to its tilt and sideCurve (forward/sideways tip offset per unit of up).")]
+    private float windBendAmount = 0.25f;
     [SerializeField] [Range(0f, 4f)] [Tooltip("Overall wind strength multiplier, combined with each blade's own baked windStrength.")]
     private float windStrengthMultiplier = 1f;
     [SerializeField] [Range(32, 512)] [Tooltip("Resolution of the procedurally generated wind noise texture.")]
@@ -73,14 +73,18 @@ public class GrassManager : MonoBehaviour
     private bool debugWindView = false;
 
     [Header("Blade Shape - base values")]
-    [SerializeField] private float bladeHeight = 1f;
-    [SerializeField] private float bladeWidth = 0.06f;
-    [SerializeField] private float bladeBend = 0.25f;
-    [SerializeField] private float bladeTilt = 1f;
+    [SerializeField] [Tooltip("Root-to-tip distance in world units. Tilt, bend and wind never change it.")]
+    private float bladeHeight = 1f;
+    [SerializeField] [Range(0.005f, 0.3f)] [Tooltip("Full blade width at the root in world units, tapering to 0 at the tip.")]
+    private float bladeWidth = 0.12f;
+    [SerializeField] [Range(0f, 1f)] [Tooltip("How far the blade's midpoint bows away from the straight root-to-tip line, as a fraction of height.")]
+    private float bladeBend = 0.15f;
+    [SerializeField] [Range(0f, 3f)] [Tooltip("Forward lean: tip's forward offset per unit of up. 0 = upright, 1 = 45 degrees.")]
+    private float bladeTilt = 0.5f;
 
     [Header("Per-Blade Randomization")]
     [SerializeField] [Range(0f, 1f)] private float shapeVariance = 0.3f; // +/- fraction of base height/width/bend/tilt
-    [SerializeField] private float sideCurveStrength = 0.05f;            // max random sideways curve magnitude
+    [SerializeField] private float sideCurveStrength = 0.035f;           // max random sideways lean, per unit of up
     [SerializeField] [Range(0f, 1f)] private float jitterStrength = 1f;  // fraction of grid step used as position jitter
 
     [Header("Lighting")]
@@ -117,7 +121,7 @@ public class GrassManager : MonoBehaviour
     private static readonly int tileDataStride = Marshal.SizeOf<TileData>();
 
     // GrassData is populated entirely on the GPU; only its byte stride is needed here to size the buffer.
-    private const int grassDataStride = 68;
+    private const int grassDataStride = 60;
 
     private struct TileEntry { public TileData data; public Bounds bounds; }
 
@@ -658,17 +662,16 @@ public class GrassManager : MonoBehaviour
     }
 
     // Worst-case root-to-vertex distance across all randomized blades, given the current
-    // base shape params. This is a triangle-inequality upper bound: a vertex is the root
-    // plus a sum of offsets (height, tilt, bend, sideCurve, width), so the sum of their
-    // max magnitudes is always >= the true bounding radius.
+    // base shape params. The tip is always exactly height away from the root, whatever the
+    // tilt, sideCurve or wind lean, and the curve stays inside its control points, which
+    // bend can push at most bend * height further out. Half the width is added on top.
     private float ComputeBladeBoundingRadius()
     {
         float maxHeight = bladeHeight * (1f + shapeVariance);
-        float maxTilt = Mathf.Abs(bladeTilt) * (1f + shapeVariance);
         float maxBend = Mathf.Abs(bladeBend) * (1f + shapeVariance);
         float maxWidth = bladeWidth * (1f + shapeVariance);
 
-        return maxHeight + maxTilt + maxBend + sideCurveStrength + maxWidth;
+        return maxHeight * (1f + maxBend) + maxWidth * 0.5f;
     }
 
     private void PrepareIndirectArgs()

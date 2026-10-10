@@ -26,27 +26,26 @@ struct BladeParams
     float sideCurve;
 };
 
-// Cubic Bezier spine:
-//  - the tip sits at a height/tilt offset from the root (facing is applied after);
-//  - the midpoint lies on the root-to-tip line, pushed off it by "bend" along the
-//    line's perpendicular (bend = 0 collapses the curve to a straight line);
-//  - the two interior control points sit 2/3 of the way from each endpoint to the midpoint;
-//  - sideCurve is applied after this tilt/bend curve.
+// Cubic Bezier spine, with height as the root-to-tip distance:
+//  - tilt (forward) and sideCurve (sideways) only set the tip's lean direction, as
+//    offsets per unit of up, so they never change how far the tip is from the root;
+//  - the midpoint lies on the root-to-tip line, pushed off it by "bend" (a fraction of
+//    height) along the line's perpendicular (bend = 0 collapses the curve to a straight line);
+//  - the two interior control points sit 2/3 of the way from each endpoint to the midpoint.
+float3 GetBladeTip(BladeParams p)
+{
+    return p.height * normalize(float3(p.sideCurve, 1.0, p.tilt));
+}
+
 void GetBezierControlPoints(BladeParams p, out float3 root, out float3 p1, out float3 p2, out float3 tip)
 {
     root = float3(0, 0, 0);
-    tip = float3(0, p.height, p.tilt);
+    tip = GetBladeTip(p);
 
-    float3 toTip = tip - root;
-    float toTipLen = length(toTip);
-    float3 dir = toTipLen > 1e-6 ? toTip / toTipLen : float3(0, 1, 0);
+    float3 dir = normalize(float3(p.sideCurve, 1.0, p.tilt));
+    float3 perp = float3(0, dir.z, -dir.y) / length(dir.yz);
 
-    // dir always lies in the YZ plane (tip.x is always 0), so its perpendicular within
-    // that same plane is just a 90-degree rotation of dir - always unit length, with no
-    // singularity.
-    float3 perp = float3(0, dir.z, -dir.y);
-
-    float3 mid = lerp(root, tip, 0.5) + perp * p.bend;
+    float3 mid = tip * 0.5 + perp * p.bend * p.height;
     p1 = root + (mid - root) * (2.0 / 3.0);
     p2 = tip + (mid - tip) * (2.0 / 3.0);
 }
@@ -57,14 +56,10 @@ float3 EvaluateCubicBezier(BladeParams p, float t)
     GetBezierControlPoints(p, root, p1, p2, tip);
 
     float u = 1.0 - t;
-    float3 curvePos = u * u * u * root
-                     + 3.0 * u * u * t * p1
-                     + 3.0 * u * t * t * p2
-                     + t * t * t * tip;
-
-    // root/tip/mid/p1/p2 all have x = 0, so curvePos.x is always 0 here.
-    curvePos.x = p.sideCurve * t;
-    return curvePos;
+    return u * u * u * root
+         + 3.0 * u * u * t * p1
+         + 3.0 * u * t * t * p2
+         + t * t * t * tip;
 }
 
 // Derivative of the same curve, i.e. the spine's tangent direction at t.
@@ -77,7 +72,6 @@ float3 EvaluateCubicBezierTangent(BladeParams p, float t)
     float3 tangent = 3.0 * u * u * (p1 - root)
                     + 6.0 * u * t * (p2 - p1)
                     + 3.0 * t * t * (tip - p2);
-    tangent.x = p.sideCurve;
 
     float len = length(tangent);
     return len > 1e-6 ? tangent / len : float3(0, 1, 0);
@@ -85,7 +79,7 @@ float3 EvaluateCubicBezierTangent(BladeParams p, float t)
 
 float GetBladeWidthAt(BladeParams p, float t)
 {
-    return p.width * (1.0 - t);
+    return 0.5 * p.width * (1.0 - t);
 }
 
 // The strip's actual position logic. stripIndex is in [0, BLADE_STRIP_VERTEX_COUNT).
@@ -93,10 +87,10 @@ float3 GetStripVertexPosition(BladeParams p, uint stripIndex)
 {
 #if defined(_GRASS_LOD_LOW)
     if (stripIndex == 2)
-        return float3(p.sideCurve, p.height, p.tilt);
+        return GetBladeTip(p);
 
     float sideSign = (stripIndex == 0) ? -1.0 : 1.0;
-    return float3(sideSign * p.width, 0, 0);
+    return float3(sideSign * GetBladeWidthAt(p, 0.0), 0, 0);
 #else
     uint row = stripIndex / 2;
     uint side = stripIndex % 2;
@@ -140,7 +134,7 @@ float3 RotateAroundY(float3 v, float angle)
 float3 GetBladeLocalNormal(BladeParams p, uint stripIndex, uint bladeHash)
 {
 #if defined(_GRASS_LOD_LOW)
-    float2 chordYZ = float2(p.height, p.tilt);
+    float2 chordYZ = GetBladeTip(p).yz;
     float chordLen = length(chordYZ);
     return chordLen > 1e-5 ? float3(0, -chordYZ.y, chordYZ.x) / chordLen : float3(0, 0, 1);
 #else

@@ -75,7 +75,7 @@ float SampleGroundMask(float3 worldPos)
 // grass exists there at all, so stray near-zero weights (paint blend noise) can't roll a blade.
 static const float GroundMaskDeadZone = 0.1;
 
-// Floor on the shrink applied to tilt/bend/height as weight approaches the dead zone,
+// Floor on the shrink applied to height as weight approaches the dead zone,
 // so a blade surviving only near the boundary shrinks instead of disappearing to nothing.
 static const float MinGroundMaskParamScale = 0.4;
 
@@ -169,8 +169,8 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
     float groundMaskParamScale = lerp(MinGroundMaskParamScale, 1.0, groundMaskBlend);
 
     float width = max(0.001, _BaseWidth * (1.0 + HashToSigned(bladeHash, 4) * _ShapeVariance));
-    float tilt = _BaseTilt * (1.0 + HashToSigned(bladeHash, 5) * _ShapeVariance) * groundMaskParamScale;
-    float bend = _BaseBend * (1.0 + HashToSigned(bladeHash, 6) * _ShapeVariance) * groundMaskParamScale;
+    float tilt = _BaseTilt * (1.0 + HashToSigned(bladeHash, 5) * _ShapeVariance);
+    float bend = _BaseBend * (1.0 + HashToSigned(bladeHash, 6) * _ShapeVariance);
     float sideCurve = HashToSigned(bladeHash, 7) * _SideCurveStrength;
 
     // Every blade whose nearest Voronoi seed is the same clump cell shares this facing/color,
@@ -205,8 +205,7 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
 
     float shrink = GetGrassFadeShrink(worldPos, _GrassCameraPosition, _GrassFadeStartDist, _GrassFadeEndDist);
     height *= shrink;
-    tilt *= shrink;
-    bend *= shrink * GetGrassLODBendFade(distToCamera, _GrassLODSwitchDist - _GrassLODBendBlendDist, _GrassLODSwitchDist);
+    bend *= GetGrassLODBendFade(distToCamera, _GrassLODSwitchDist - _GrassLODBendBlendDist, _GrassLODSwitchDist);
 
     GrassData grass;
     grass.position = worldPos;
@@ -216,7 +215,6 @@ void BuildGrass (uint3 id : SV_DispatchThreadID, uint3 groupID : SV_GroupID)
     grass.tilt = tilt;
     grass.bend = bend;
     grass.sideCurve = sideCurve;
-    grass.clumpFacing = clumpFacing;
     grass.clumpColor = clumpColor;
     grass.windStrength = windNoise;
     grass.bladeHash = bladeHash;
