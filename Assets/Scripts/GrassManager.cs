@@ -6,7 +6,7 @@ using UnityEngine.Rendering;
 public class GrassManager : MonoBehaviour
 {
     // Slider limits. The tile streaming pool is sized for these once at Start; the grass
-    // buffers instead grow to the current settings (see EnsureGrassBufferCapacity).
+    // buffers instead follow the current settings (see EnsureGrassBufferCapacity).
     private const int MaxGrassPerAxisPerTile = 64;
     private const int MaxRenderDistanceInTiles = 16;
 
@@ -236,18 +236,19 @@ public class GrassManager : MonoBehaviour
 
     private void EnsureGrassBufferCapacity()
     {
-        int bladesPerTile = grassPerAxisPerTile * grassPerAxisPerTile;
-        int requiredLow = CountMaxStreamedTiles() * bladesPerTile;
-        int requiredHigh = Mathf.Min(CountMaxBladesWithinDistance(lodSwitchDistance), requiredLow);
+        float renderDistanceWorld = renderDistanceInTiles * TileSize;
+        float switchDistance = Mathf.Min(lodSwitchDistance, renderDistanceWorld);
+        int requiredHigh = CountMaxBladesBetween(0f, switchDistance);
+        int requiredLow = CountMaxBladesBetween(switchDistance, renderDistanceWorld);
 
-        if (requiredHigh > grassBufferCapacity)
+        if (requiredHigh != grassBufferCapacity)
         {
             grassDataBuffer?.Release();
             grassDataBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Append, requiredHigh, grassDataStride);
             grassBufferCapacity = requiredHigh;
         }
 
-        if (requiredLow > grassBufferCapacityLow)
+        if (requiredLow != grassBufferCapacityLow)
         {
             grassDataBufferLow?.Release();
             grassDataBufferLow = new GraphicsBuffer(GraphicsBuffer.Target.Append, requiredLow, grassDataStride);
@@ -255,31 +256,13 @@ public class GrassManager : MonoBehaviour
         }
     }
 
-    private int CountMaxStreamedTiles()
-    {
-        float renderDistanceWorld = renderDistanceInTiles * TileSize;
-        float renderDistanceWorldSqr = renderDistanceWorld * renderDistanceWorld;
-        float halfTile = TileSize * 0.5f;
-
-        int count = 0;
-        for (int dx = -renderDistanceInTiles; dx <= renderDistanceInTiles; dx++)
-        {
-            for (int dz = -renderDistanceInTiles; dz <= renderDistanceInTiles; dz++)
-            {
-                float nearestX = Mathf.Max(0f, Mathf.Abs(dx) * TileSize - halfTile);
-                float nearestZ = Mathf.Max(0f, Mathf.Abs(dz) * TileSize - halfTile);
-                if (nearestX * nearestX + nearestZ * nearestZ <= renderDistanceWorldSqr)
-                    count++;
-            }
-        }
-        return count;
-    }
-
-    private int CountMaxBladesWithinDistance(float distance)
+    private int CountMaxBladesBetween(float innerDistance, float outerDistance)
     {
         float step = TileSize / grassPerAxisPerTile;
-        float reach = distance + step * Mathf.Sqrt(2f);
-        return Mathf.CeilToInt(Mathf.PI * reach * reach / (step * step));
+        float margin = step * Mathf.Sqrt(2f);
+        float inner = Mathf.Max(innerDistance - margin, 0f);
+        float outer = outerDistance + margin;
+        return Mathf.CeilToInt(Mathf.PI * (outer * outer - inner * inner) / (step * step));
     }
 
     // Procedural wind noise, generated once at startup and scrolled via a shader global
