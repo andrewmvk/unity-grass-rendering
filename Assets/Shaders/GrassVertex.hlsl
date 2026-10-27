@@ -28,6 +28,15 @@ struct GrassVertexData
     uint bladeHash;
 };
 
+float3 ApplyViewSpaceThickening(float3 positionWS, float3 bladeRightWS, float lateralOffset)
+{
+    float3 cameraRightWS = UNITY_MATRIX_V[0].xyz;
+    float projectedRight = dot(bladeRightWS, cameraRightWS);
+    float missingWidth = max(BLADE_MIN_SCREEN_WIDTH_RATIO - abs(projectedRight), 0.0);
+    float screenSide = projectedRight >= 0.0 ? 1.0 : -1.0;
+    return positionWS + cameraRightWS * (lateralOffset * screenSide * missingWidth);
+}
+
 // Used by both passes: position, normal, and everything the lighting model/normal buffer need.
 GrassVertexData GetGrassVertexData(uint vertexID, uint instanceID)
 {
@@ -46,8 +55,10 @@ GrassVertexData GetGrassVertexData(uint vertexID, uint instanceID)
     float distToCamera = length(grass.position - _GrassCameraPosition);
     float farFade = GetGrassFarShadingFade(distToCamera, _GrassFarShadingStartDist, _GrassFarShadingEndDist);
 
+    float3 positionWS = grass.position + ApplyBladeOrientation(localPos, grass.facing);
+
     GrassVertexData o;
-    o.positionWS = grass.position + ApplyBladeOrientation(localPos, grass.facing);
+    o.positionWS = ApplyViewSpaceThickening(positionWS, GetBladeRightWS(grass.facing), GetBladeLateralOffset(params, vertexID));
     o.normalWS = normalize(ApplyBladeOrientation(localNormal, grass.facing));
     o.groundNormalWS = farFade > 0.0 ? ComputeTerrainNormal(grass.position.xz) : float3(0, 1, 0);
     o.farFade = farFade;

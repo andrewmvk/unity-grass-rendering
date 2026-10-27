@@ -1092,7 +1092,6 @@ MonoBehaviour:
   heightFadeStartFraction: 0.75
   lodSwitchDistance: 20
   lodBendBlendDistance: 5
-  lowLODDepthPrepass: 1
   densityFadeStartDistance: 20
   minDensityFraction: 0.1
   terrain: {fileID: 1583307900}
@@ -1112,8 +1111,8 @@ MonoBehaviour:
   windStrengthMultiplier: 1.49
   windNoiseResolution: 256
   debugWindView: 0
-  bladeHeight: 1.45
-  bladeWidth: 0.06
+  bladeHeight: 2
+  bladeWidth: 0.091
   bladeBend: 0.19
   bladeTilt: 0.82
   shapeVariance: 0.3

@@ -17,6 +17,9 @@
 #define BLADE_ROUNDNESS_ANGLE 0.7
 #define BLADE_ROUNDNESS_JITTER 0.15
 
+// Fraction of its full width a blade keeps on screen when seen edge-on.
+#define BLADE_MIN_SCREEN_WIDTH_RATIO 0.5
+
 struct BladeParams
 {
     float height;
@@ -82,35 +85,6 @@ float GetBladeWidthAt(BladeParams p, float t)
     return 0.5 * p.width * (1.0 - t);
 }
 
-// The strip's actual position logic. stripIndex is in [0, BLADE_STRIP_VERTEX_COUNT).
-float3 GetStripVertexPosition(BladeParams p, uint stripIndex)
-{
-#if defined(_GRASS_LOD_LOW)
-    if (stripIndex == 2)
-        return GetBladeTip(p);
-
-    float sideSign = (stripIndex == 0) ? -1.0 : 1.0;
-    return float3(sideSign * GetBladeWidthAt(p, 0.0), 0, 0);
-#else
-    uint row = stripIndex / 2;
-    uint side = stripIndex % 2;
-
-    // The final vertex (14) is the single tip apex where the strip converges.
-    bool isTip = stripIndex == (BLADE_STRIP_VERTEX_COUNT - 1);
-    float t = isTip ? 1.0 : row / (float)BLADE_ROW_COUNT;
-    float sideSign = (side == 0) ? -1.0 : 1.0;
-
-    float3 center = EvaluateCubicBezier(p, t);
-    float width = isTip ? 0.0 : GetBladeWidthAt(p, t);
-    return center + float3(sideSign * width, 0, 0);
-#endif
-}
-
-float3 GetBladeLocalPosition(BladeParams p, uint stripIndex)
-{
-    return GetStripVertexPosition(p, stripIndex);
-}
-
 float GetBladeHeightPercent(uint stripIndex)
 {
 #if defined(_GRASS_LOD_LOW)
@@ -120,6 +94,42 @@ float GetBladeHeightPercent(uint stripIndex)
     uint row = stripIndex / 2;
     return isTip ? 1.0 : row / (float)BLADE_ROW_COUNT;
 #endif
+}
+
+// Signed distance from the spine along the blade's right axis; the tip apex has none.
+float GetBladeLateralOffset(BladeParams p, uint stripIndex)
+{
+#if defined(_GRASS_LOD_LOW)
+    if (stripIndex == 2)
+        return 0.0;
+
+    float sideSign = (stripIndex == 0) ? -1.0 : 1.0;
+    return sideSign * GetBladeWidthAt(p, 0.0);
+#else
+    bool isTip = stripIndex == (BLADE_STRIP_VERTEX_COUNT - 1);
+    if (isTip)
+        return 0.0;
+
+    float sideSign = (stripIndex % 2 == 0) ? -1.0 : 1.0;
+    return sideSign * GetBladeWidthAt(p, (stripIndex / 2) / (float)BLADE_ROW_COUNT);
+#endif
+}
+
+// The strip's actual position logic. stripIndex is in [0, BLADE_STRIP_VERTEX_COUNT).
+float3 GetStripVertexPosition(BladeParams p, uint stripIndex)
+{
+    float3 lateral = float3(GetBladeLateralOffset(p, stripIndex), 0, 0);
+#if defined(_GRASS_LOD_LOW)
+    return stripIndex == 2 ? GetBladeTip(p) : lateral;
+#else
+    // The final vertex (14) is the single tip apex where the strip converges.
+    return EvaluateCubicBezier(p, GetBladeHeightPercent(stripIndex)) + lateral;
+#endif
+}
+
+float3 GetBladeLocalPosition(BladeParams p, uint stripIndex)
+{
+    return GetStripVertexPosition(p, stripIndex);
 }
 
 float3 RotateAroundY(float3 v, float angle)
@@ -153,11 +163,16 @@ float3 GetBladeLocalNormal(BladeParams p, uint stripIndex, uint bladeHash)
 #endif
 }
 
+float3 GetBladeRightWS(float2 facing)
+{
+    return normalize(float3(facing.x, 0, facing.y));
+}
+
 // Builds the blade's world-space orientation from its facing direction.
 float3 ApplyBladeOrientation(float3 localPos, float2 facing)
 {
     float3 up = float3(0, 1, 0);
-    float3 right = normalize(float3(facing.x, 0, facing.y));
+    float3 right = GetBladeRightWS(facing);
     float3 forward = cross(right, up);
 
     return right * localPos.x + up * localPos.y + forward * localPos.z;
